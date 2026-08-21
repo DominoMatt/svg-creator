@@ -37,11 +37,17 @@
   .viewer-header { padding: .65rem 1rem; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; background: #fff; }
   #currentSvgName { font-size: .95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .commit-row { display: flex; gap: .5rem; align-items: center; }
+  .commit-row #forkBtn { margin-left: 2.25rem; }
   .commit-row input { padding: .4rem .6rem; border: 1px solid #ccc; border-radius: 4px; width: 210px; }
   .viewer-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
   .viewer-content svg { max-width: 100%; max-height: 100%; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
   .placeholder { color: #999; text-align: center; max-width: 420px; line-height: 1.6; }
   .info { padding: .55rem 1rem; border-top: 1px solid #eee; font-size: .78rem; color: #666; background: #fff; min-height: 2.1rem; }
+  #codeEditor { flex: 1; display: flex; flex-direction: column; background: #fff; min-height: 0; }
+  #codeEditor.hidden { display: none; }
+  .code-toolbar { display: flex; gap: .5rem; align-items: center; padding: .45rem 1rem; border-bottom: 1px solid #eee; font-size: .8rem; color: #666; }
+  .code-toolbar span { flex: 1; }
+  #codeArea { flex: 1; width: 100%; border: none; outline: none; resize: none; padding: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; line-height: 1.5; color: #24292f; background: #fafbfc; tab-size: 2; }
   .toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: .6rem 1.1rem; border-radius: 6px; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 10; }
   .toast.show { opacity: .95; }
 </style>
@@ -78,12 +84,23 @@
         <button id="commitBtn" disabled>Commit</button>
         <button id="forkBtn" class="secondary" disabled>Fork</button>
         <button id="targetBtn" class="secondary" disabled title="Tell the AI agent to edit this project">🎯 Target</button>
+        <button id="saveSvgBtn" class="secondary" disabled title="Download this SVG to your computer">⬇ Save</button>
+        <button id="saveAllBtn" class="secondary" disabled title="Save current.svg plus every committed version into a folder of plain .svg files">⬇ Save all</button>
+        <button id="codeBtn" class="secondary" disabled title="View and edit the raw SVG source">&lt;/&gt; Code</button>
         <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete</button>
       </div>
     </div>
     <div class="viewer-content" id="viewerContent">
       <div class="placeholder">Select or create a project to begin.<br><br>
         Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — enable <b>Live</b> to watch it appear in real time.</div>
+    </div>
+    <div id="codeEditor" class="hidden">
+      <div class="code-toolbar">
+        <span id="codeHint"></span>
+        <button id="codeSaveBtn" title="Write this source back to current.svg (Ctrl/Cmd+S)">Save</button>
+        <button id="codeCancelBtn" class="secondary">Cancel</button>
+      </div>
+      <textarea id="codeArea" spellcheck="false"></textarea>
     </div>
     <div class="info" id="svgInfo"></div>
   </section>
@@ -99,7 +116,7 @@ const projectList = $('projectList'), versionList = $('versionList'),
       commitLabel = $('commitLabel'), viewBanner = $('viewBanner'),
       viewBannerText = $('viewBannerText');
 
-const state = { project: null, viewingVersion: null, target: null };
+const state = { project: null, viewingVersion: null, target: null, codeMode: false };
 
 function toast(msg) {
   const t = $('toast');
@@ -163,11 +180,15 @@ async function loadProjects(selectName) {
 function renderEmpty() {
   state.project = null;
   state.viewingVersion = null;
+  setCodeMode(false);
   currentSvgName.textContent = 'No project selected';
   commitBtn.disabled = true;
   forkBtn.disabled = true;
   $('targetBtn').disabled = true;
   $('deleteBtn').disabled = true;
+  $('saveSvgBtn').disabled = true;
+  $('saveAllBtn').disabled = true;
+  $('codeBtn').disabled = true;
   versionList.innerHTML = '';
   optionList.innerHTML = '';
   svgInfo.textContent = '';
@@ -177,10 +198,14 @@ function renderEmpty() {
 async function selectProject(name) {
   state.project = name;
   state.viewingVersion = null;
+  setCodeMode(false);
   commitBtn.disabled = false;
   forkBtn.disabled = false;
   $('targetBtn').disabled = false;
   $('deleteBtn').disabled = false;
+  $('saveSvgBtn').disabled = false;
+  $('saveAllBtn').disabled = false;
+  $('codeBtn').disabled = false;
   viewBanner.classList.add('hidden');
   [...projectList.children].forEach((li) =>
     li.classList.toggle('active', li.querySelector('.name')?.textContent.replace(' ·', '') === name)
@@ -382,7 +407,12 @@ async function loadVersions() {
       restore.textContent = 'Restore';
       restore.title = 'Copy this version back into current.svg (not committed automatically)';
       restore.addEventListener('click', (e) => { e.stopPropagation(); restoreVersion(v.id); });
-      li.append(checkbox, label, restore);
+      const save = document.createElement('button');
+      save.className = 'small secondary';
+      save.textContent = '⬇';
+      save.title = 'Download this version as .svg';
+      save.addEventListener('click', (e) => { e.stopPropagation(); downloadVersion(v.id); });
+      li.append(checkbox, label, restore, save);
       li.addEventListener('click', () => viewVersion(v.id));
       versionList.appendChild(li);
     }
@@ -393,6 +423,7 @@ async function loadVersions() {
 }
 
 async function viewVersion(id) {
+  setCodeMode(false);
   try {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/versions/${encodeURIComponent(id)}`);
     state.viewingVersion = id;
@@ -424,6 +455,127 @@ async function restoreVersion(id) {
     toast(err.message);
   }
 }
+
+/* ---------- save / download (plain .svg files — no zip) ---------- */
+
+async function downloadSvgFile(path, filename) {
+  const res = await api(path);
+  const blob = new Blob([await res.text()], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function downloadVersion(id) {
+  if (!state.project) return;
+  const p = encodeURIComponent(state.project);
+  try {
+    await downloadSvgFile(`/api/projects/${p}/versions/${encodeURIComponent(id)}`, `${state.project}-${id}`);
+    toast(`Saved ${state.project}-${id}`);
+  } catch (err) { toast(err.message); }
+}
+
+$('saveSvgBtn').addEventListener('click', async () => {
+  if (!state.project) return;
+  if (state.viewingVersion) return downloadVersion(state.viewingVersion);
+  const p = encodeURIComponent(state.project);
+  try {
+    await downloadSvgFile(`/api/projects/${p}/current`, `${state.project}.svg`);
+    toast(`Saved ${state.project}.svg`);
+  } catch (err) { toast(err.message); }
+});
+
+$('saveAllBtn').addEventListener('click', async () => {
+  if (!state.project) return;
+  const p = encodeURIComponent(state.project);
+  try {
+    const versions = await (await api(`/api/projects/${p}/versions`)).json(); // newest first
+    const files = versions.reverse().map((v) => ({
+      path: `/api/projects/${p}/versions/${encodeURIComponent(v.id)}`,
+      name: `${state.project}-${v.id}`
+    }));
+    files.push({ path: `/api/projects/${p}/current`, name: `${state.project}.svg` });
+
+    // Preferred: write straight into a real folder (Chromium File System Access API).
+    // Creates/uses a subfolder named after the project — no zip, no loose files.
+    if (window.showDirectoryPicker) {
+      const dir = await showDirectoryPicker({ mode: 'readwrite' });
+      const projDir = await dir.getDirectoryHandle(state.project, { create: true });
+      for (const f of files) {
+        const fh = await projDir.getFileHandle(f.name, { create: true });
+        const writable = await fh.createWritable();
+        const res = await api(f.path);
+        await writable.write(new Blob([await res.text()], { type: 'image/svg+xml' }));
+        await writable.close();
+      }
+      toast(`Saved ${files.length} file${files.length > 1 ? 's' : ''} to ${state.project}/`);
+      return;
+    }
+
+    // Fallback (Firefox/Safari): sequential per-file downloads
+    if (!confirm(`Download ${files.length} .svg file${files.length > 1 ? 's' : ''} to your computer?\n(Your browser may ask to allow multiple downloads.)`)) return;
+    for (const f of files) {
+      await downloadSvgFile(f.path, f.name);
+      await new Promise((r) => setTimeout(r, 350)); // breathing room between downloads
+    }
+    toast(`Saved ${files.length} file${files.length > 1 ? 's' : ''}`);
+  } catch (err) {
+    if (err.name === 'AbortError') return; // user cancelled the folder picker
+    toast(err.message);
+  }
+});
+
+/* ---------- raw source editor ---------- */
+
+function setCodeMode(on) {
+  state.codeMode = on;
+  $('codeEditor').classList.toggle('hidden', !on);
+  viewerContent.style.display = on ? 'none' : '';
+  svgInfo.style.display = on ? 'none' : '';
+}
+
+$('codeBtn').addEventListener('click', async () => {
+  if (!state.project) return;
+  if (state.viewingVersion) { toast('Go back to current before editing source'); return; }
+  try {
+    const res = await api(`/api/projects/${encodeURIComponent(state.project)}/current`);
+    $('codeArea').value = await res.text();
+    $('codeHint').textContent = `Editing ${state.project}/current.svg — plain SVG source`;
+    setCodeMode(true);
+    $('codeArea').focus();
+  } catch (err) { toast(err.message); }
+});
+
+$('codeCancelBtn').addEventListener('click', () => {
+  setCodeMode(false);
+  loadCurrent();
+});
+
+$('codeSaveBtn').addEventListener('click', async () => {
+  if (!state.project) return;
+  try {
+    await api(`/api/projects/${encodeURIComponent(state.project)}/current`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/svg+xml' },
+      body: $('codeArea').value
+    });
+    toast('Saved — view updated');
+    setCodeMode(false);
+    loadCurrent();
+  } catch (err) { toast(err.message); }
+});
+
+// Ctrl/Cmd+S saves from the editor
+$('codeArea').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    $('codeSaveBtn').click();
+  }
+});
 
 /* ---------- commit & fork ---------- */
 
@@ -534,7 +686,7 @@ function startLive() {
     clearTimeout(timers[ev]);
     timers[ev] = setTimeout(() => fn(JSON.parse(e.data || '{}')), 120);
   });
-  on('current-changed', (d) => { if (d.project === state.project && !state.viewingVersion) loadCurrent(); });
+  on('current-changed', (d) => { if (d.project === state.project && !state.viewingVersion && !state.codeMode) loadCurrent(); });
   on('versions-changed', (d) => { if (d.project === state.project) loadVersions(); });
   on('projects-changed', () => loadProjects());
   // Agent re-targeted the project from chat (.focus.json changed) → move the 🎯 marker
