@@ -27,8 +27,8 @@ public/svgs/
 ```
 
 Because designs are plain files, a coding agent participates with ordinary file tools,
-and the browser live-reloads whatever changes — SSE events with an mtime-polling
-fallback for filesystems that never deliver inotify events.
+and the browser live-reloads whatever changes — the server polls file mtimes (~800ms)
+and pushes SSE events, and the UI fully resyncs whenever its connection (re)opens.
 
 ## Features
 
@@ -44,19 +44,22 @@ fallback for filesystems that never deliver inotify events.
   and the agent 🎯 target follows the rename
 - **Forks** — branch from the current state or any committed version into a fresh
   project; lineage recorded in the fork's `meta.json`
-- **Options rounds** — agents propose alternatives into `options/`; compare side by side,
-  promote ("Use") or ✓ commit straight from the tray, dismiss one or all. New rounds
-  replace the previous batch by default; committed options stay marked ✓
+- **Options rounds** — agents propose alternatives as files in `options/`; compare side
+  by side, promote ("Use") or ✓ commit straight from the tray, dismiss one or all.
+  New proposals append to the tray until you clear them (✕ / Dismiss all, or ask the
+  agent); committed options stay marked ✓
 - **Raw source editor** — `</>` Code toggles editable SVG source; Save (or Ctrl/Cmd+S)
   writes it back and the rendered view refreshes. Works on empty projects too: paste SVG
-  source into a brand-new project and Save creates `current.svg`. Live reload pauses
+  source into a brand-new project and Save creates `current.svg`. Live updates pause
   while editing so agent writes can't clobber in-progress edits
 - **Save / export** — ⬇ Save downloads the current SVG (or the previewed snapshot);
   ⬇ Save all writes the whole project into a real folder of plain `.svg` files via the
   File System Access API (per-file download fallback elsewhere) — deliberately no zip
 - **Agent targeting** — 🎯 Target marks which project agents should edit
   (persisted as `public/svgs/.focus.json`)
-- **Live reload** — on by default; toggle in the header
+- **Connection status** — a pill in the header shows whether the browser is connected
+  to the server; it reconnects automatically and resyncs everything on reconnect, and
+  clicking it forces an immediate reconnect + resync
 
 ## HTTP API
 
@@ -71,8 +74,7 @@ can use them too.
 | `POST` | `/api/projects/:name/rename` | Rename project `{ name }` — folder renamed; agent 🎯 target follows |
 | `GET` | `/api/projects/:name/current` | Fetch working copy |
 | `PUT` | `/api/projects/:name/current` | Write working copy (accepts raw SVG or `{"svg": "..."}`) |
-| `GET` | `/api/projects/:name/options` | List pending options (+ committed flags) |
-| `POST` | `/api/projects/:name/options` | Submit a round `{options:[{label,svg}], append?}` — replaces by default |
+| `GET` | `/api/projects/:name/options` | List pending options (+ committed flags) — rounds are submitted as files, not via POST (see AGENTS.md) |
 | `GET` | `/api/projects/:name/options/:id` | Fetch one option's SVG |
 | `DELETE` | `/api/projects/:name/options` | Dismiss all options |
 | `DELETE` | `/api/projects/:name/options/:id` | Dismiss one option |
@@ -98,4 +100,3 @@ commands, and resolve the 🎯 target before touching anything.
 ## More
 
 - [AGENTS.md](AGENTS.md) — agent workflow rules (source of truth)
-- [PLAN.md](PLAN.md) — vision, status, and what's next

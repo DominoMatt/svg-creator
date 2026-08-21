@@ -1,6 +1,5 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const fsp = require('fs/promises');
 
 const app = express();
@@ -17,7 +16,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 /* ---------------- helpers ---------------- */
 
 const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
-const VERSION_ID_RE = /^v\d{3}-[a-z0-9-]+\.svg$/;
+const VERSION_ID_RE = /^v\d{3}-[a-zA-Z0-9_-]+\.svg$/;
 
 function safeProjectPath(name) {
   if (!PROJECT_NAME_RE.test(name)) return null;
@@ -36,8 +35,7 @@ function getProjectDir(req, res) {
 
 function sanitizeLabel(label, fallback = 'untitled') {
   const s = String(label || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
   return s || fallback;
@@ -63,7 +61,7 @@ app.get('/api/events', (req, res) => {
     Connection: 'keep-alive'
   });
   res.flushHeaders();
-  res.write('data: connected\n\n');
+  res.write('retry: 1000\n\n'); // reconnect quickly after a server restart
   clients.push(res);
   req.on('close', () => {
     clients = clients.filter((c) => c !== res);
@@ -75,8 +73,14 @@ function broadcast(event, payload) {
   for (const c of clients) c.write(data);
 }
 
+// Comment-ping keeps intermediaries from idling the stream out and flushes
+// dead sockets so closed connections leave the clients list promptly.
+setInterval(() => {
+  for (const c of clients) c.write(': ping\n\n');
+}, 20000);
+
 const pendingEvents = new Map();
-function broadcastDebounced(event, payload, delay = 150) {
+function broadcastDebounced(event, payload) {
   const key = event + ':' + (payload.project || '');
   clearTimeout(pendingEvents.get(key));
   pendingEvents.set(
@@ -84,13 +88,11 @@ function broadcastDebounced(event, payload, delay = 150) {
     setTimeout(() => {
       pendingEvents.delete(key);
       broadcast(event, payload);
-    }, delay)
+    }, 150)
   );
 }
 
-/* Watch the whole svgs tree; classify changes into specific events.
-   NOTE: the returned FSWatcher must be kept referenced — if not stored,
-   GC will silently collect it and file events stop firing. */
+/* Classify a changed file path (relative to SVG_DIR) into an SSE event. */
 function classifyChange(relPath) {
   if (relPath === '.focus.json') return ['focus-changed', {}];
   const parts = relPath.split('/');
@@ -104,17 +106,11 @@ function classifyChange(relPath) {
   return ['projects-changed', { project }];
 }
 
-const svgWatcher = fs.watch(SVG_DIR, { persistent: true }, (_eventType, filename) => {
-  // ignore dotfiles except .focus.json (agents may update the target from chat)
-  if (!filename || (filename.startsWith('.') && filename !== '.focus.json')) return;
-  const [event, payload] = classifyChange(filename.replace(/\\/g, '/'));
-  broadcastDebounced(event, payload);
-});
-svgWatcher.on('error', (err) => console.error('SVG watcher error:', err));
-
-/* Polling fallback: some container/bind-mount filesystems silently never
-   deliver fs.watch events, so also diff an mtime snapshot every 800ms.
-   Cheap for local projects and guarantees live updates everywhere. */
+/* Change detection: diff an mtime snapshot of the svgs tree every 800ms.
+   Polling (instead of fs.watch) behaves identically everywhere, including
+   container/bind-mount filesystems that never deliver watch events, and is
+   cheap for local-sized projects. Missed windows don't matter: the browser
+   fully resyncs whenever its SSE connection (re)opens. */
 async function scanTree() {
   const snapshot = {};
   async function walk(dir, rel) {
@@ -205,7 +201,6 @@ app.post('/api/projects', async (req, res) => {
       path.join(dir, 'meta.json'),
       JSON.stringify({ name, description: '', created: new Date().toISOString() }, null, 2)
     );
-    broadcastDebounced('projects-changed', {}, 50);
     res.status(201).json({ name });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -257,7 +252,6 @@ app.delete('/api/projects/:project', async (req, res) => {
   }
   try {
     await fsp.rm(dir, { recursive: true, force: true });
-    broadcastDebounced('projects-changed', {}, 50);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -304,7 +298,7 @@ app.post('/api/projects/:project/commit', async (req, res) => {
   const label = req.body && req.body.label;
   const optionId = req.body && req.body.option;
   // Direct commit: an option can be committed straight to history without
-  // being promoted to current.svg first (decided in PLAN.md Q1).
+  // being promoted to current.svg first.
   if (optionId != null && !OPTION_ID_RE.test(String(optionId))) {
     return res.status(400).json({ error: 'Invalid option id' });
   }
@@ -395,7 +389,7 @@ app.get('/api/projects/:project/versions/:id', async (req, res) => {
 
 /* ---------------- options (AI-proposed alternatives) ---------------- */
 
-const OPTION_ID_RE = /^option-[a-z]{1,2}-[a-z0-9-]+\.svg$/;
+const OPTION_ID_RE = /^option-[a-z]{1,2}-[a-zA-Z0-9_-]+\.svg$/;
 const OPTIONS_STATE_FILE = 'state.json'; // inside options/; tracks which options were committed
 
 async function readCommittedIds(optionsDir) {
@@ -412,21 +406,6 @@ async function writeCommittedIds(optionsDir, ids) {
     path.join(optionsDir, OPTIONS_STATE_FILE),
     JSON.stringify({ committed: ids }, null, 2)
   );
-}
-
-// Letter index for option ids: a..z then aa, ab, ... (base-26)
-function optionLetter(idx) {
-  let n = idx;
-  let s = '';
-  do {
-    s = String.fromCharCode(97 + (n % 26)) + s;
-    n = Math.floor(n / 26) - 1;
-  } while (n >= 0);
-  return s;
-}
-
-function optionLetterIndex(letter) {
-  return letter.split('').reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 96), 0) - 1;
 }
 
 app.get('/api/projects/:project/options', async (req, res) => {
@@ -450,48 +429,8 @@ app.get('/api/projects/:project/options', async (req, res) => {
   }
 });
 
-// Submit a round of options. Default replaces the previous batch (decided:
-// rounds sweep unless append is requested). Body: {"options":[{label, svg}], "append"?:bool}
-app.post('/api/projects/:project/options', async (req, res) => {
-  const dir = getProjectDir(req, res);
-  if (!dir) return;
-  const items = req.body && Array.isArray(req.body.options) ? req.body.options : null;
-  if (!items || !items.length) {
-    return res.status(400).json({ error: 'Body must be {"options":[{label, svg}],"append"?:bool}' });
-  }
-  const append = !!(req.body && req.body.append);
-  try {
-    const optionsDir = path.join(dir, 'options');
-    if (!append) {
-      await fsp.rm(optionsDir, { recursive: true, force: true });
-    }
-    await fsp.mkdir(optionsDir, { recursive: true });
-
-    // continue lettering after any existing options
-    let maxIdx = -1;
-    if (append) {
-      for (const f of await fsp.readdir(optionsDir)) {
-        const m = f.match(/^option-([a-z]{1,2})-/);
-        if (m) maxIdx = Math.max(maxIdx, optionLetterIndex(m[1]));
-      }
-    }
-    const created = [];
-    let next = maxIdx + 1;
-    for (const item of items) {
-      const svg = String((item && item.svg) || '');
-      if (!svg.includes('<svg')) {
-        return res.status(400).json({ error: `Option "${item.label || next}" has no SVG markup` });
-      }
-      const id = `option-${optionLetter(next)}-${sanitizeLabel(item.label)}.svg`;
-      await fsp.writeFile(path.join(optionsDir, id), svg);
-      created.push(id);
-      next++;
-    }
-    res.status(201).json({ created });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// (Options rounds are created by agents writing files directly into options/;
+// there is deliberately no POST endpoint — see AGENTS.md rule 8.)
 
 // Dismiss all options
 app.delete('/api/projects/:project/options', async (req, res) => {
@@ -631,7 +570,6 @@ app.post('/api/projects/:project/fork', async (req, res) => {
       path.join(dest, 'meta.json'),
       JSON.stringify({ name, description: '', created: new Date().toISOString(), forkedFrom }, null, 2)
     );
-    broadcastDebounced('projects-changed', {}, 50);
     res.status(201).json({ name, forkedFrom });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Source not found' });
@@ -663,7 +601,6 @@ app.post('/api/projects/:project/rename', async (req, res) => {
         await fsp.writeFile(focusPath, JSON.stringify({ project: name }, null, 2));
       }
     } catch {}
-    broadcastDebounced('projects-changed', {}, 50);
     res.json({ ok: true, name });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -688,7 +625,6 @@ app.post('/api/projects/:project/versions/:id/rename', async (req, res) => {
       return res.status(409).json({ error: `Version "${newId.replace(/\.svg$/, '')}" already exists` });
     } catch {}
     await fsp.rename(path.join(dir, 'versions', id), to);
-    broadcastDebounced('versions-changed', { project: req.params.project }, 50);
     res.json({ ok: true, id: newId });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Version not found' });
