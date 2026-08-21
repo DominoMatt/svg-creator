@@ -13,6 +13,7 @@ public/svgs/
     ├── meta.json              # name, description, lineage (forks)
     ├── versions/              # explicit human-committed checkpoints (vNNN-label.svg)
     └── options/               # transient agent-proposed alternatives (option-X-label.svg)
+        └── state.json         # server-managed ✓-tracker of committed options
 ```
 
 Useful HTTP endpoints (mirror the same files, for when REST is more convenient):
@@ -31,9 +32,15 @@ Useful HTTP endpoints (mirror the same files, for when REST is more convenient):
    actually helps.
 4. **Never commit on the user's behalf.** Suggest it instead: *"Looks good — want to commit
    this as v004?"*
-5. **Naming:** options are `option-<letter>-<short-label>.svg`; versions are
-   `vNNN-<short-label>.svg`.
-6. **After writing files, wait for the SSE-driven UI update** — no need to poll.
+5. **Naming:** options are `option-<letters>-<label>.svg`; versions are
+   `vNNN-<label>.svg`. Labels use only letters, digits, `-` and `_`
+   (`[a-zA-Z0-9_-]`, keep them short) — anything else makes the file appear in
+   the UI but breaks its buttons. Option letters are lowercase and sequential:
+   `a`…`z`, then `aa`, `ab`, … — continue after the highest letter already in
+   `options/` (start at `a` only when the tray is empty).
+6. **The user's UI updates automatically.** After writing files, simply tell the
+   user the changes are ready to review — no polling, no prodding, no refresh
+   instructions.
 7. **"Commit" means svg-creator commit** — writing `current.svg` into the project's
    `versions/` folder via the commit endpoint/UI button. It has **nothing to do with git**.
    Only run `git commit` / touch the repository when the user explicitly says
@@ -44,12 +51,26 @@ Useful HTTP endpoints (mirror the same files, for when REST is more convenient):
    Terminal calls spam the user's session and were explicitly rejected. Submitting an
    options round quietly = creating the files directly in
    `public/svgs/<project>/options/` using the naming convention above; the server's
-   watcher detects them within ~800ms and the tray updates live.
+   file poller detects them within ~800ms and the tray updates live.
+   **Rounds append by default: leave earlier options in the tray and continue
+   the letter sequence past the highest existing one.** Only clear previous
+   experiments when the user asks — and when clearing, delete `state.json` (the
+   committed-✓ tracker) along with the option files, so a later option reusing a
+   letter can't show up falsely marked as already committed.
 
 ## Targeting protocol — "quiet focus" *(agreed with user)*
 
 The user marks the project agents should edit by clicking **🎯 Target** in the UI, which
-writes `public/svgs/.focus.json`. Agents must resolve the edit target like this:
+writes `public/svgs/.focus.json`. The file contains exactly:
+
+```json
+{ "project": "<project-name>" }
+```
+
+(`"project": null` means no target.) When writing it, the name must match an existing
+folder under `public/svgs/` — file writes bypass the API's existence check, and a typo
+silently hides the 🎯 marker instead of erroring. Agents must resolve the edit target
+like this:
 
 1. **If the user names a project in chat, that wins.** Never second-guess an explicit name.
 2. **Otherwise, read `.focus.json` quietly** — with file-read tools (`read_file`), *not*
@@ -67,10 +88,10 @@ the marker live — no refresh needed.
 **Always write on chat switch — even if the content looks unchanged.** Skipping the write
 when the file "already matches" risks leaving a stale UI marker forever out of sync (this
 bug happened). Rewriting the file is idempotent and forces the `focus-changed` event that
-resyncs any listening browser. Note: live marker movement requires the browser's **Live**
-toggle to be on; otherwise the marker updates on next refresh.
+resyncs any listening browser. The browser shows a connection status pill and fully
+resyncs whenever it (re)connects, so the marker can never stay stale.
 
 ---
 
-These rules are the source of truth for how agents work in this repo
-(formerly PLAN.md §4/§4.1). Usage & API docs live in README.md.
+These rules are the source of truth for how agents work in this repo.
+Usage & API docs live in README.md.

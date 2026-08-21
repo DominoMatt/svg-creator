@@ -16,8 +16,12 @@
   button.danger { background: #dc3545; } button.danger:hover { background: #a71d2a; }
   button.small { padding: .22rem .55rem; font-size: .72rem; }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  .live-toggle { display: flex; align-items: center; gap: .4rem; cursor: pointer; user-select: none; font-size: .9rem; }
-  .live-toggle input { accent-color: #007bff; width: 1rem; height: 1rem; cursor: pointer; }
+  .status-pill { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .85rem; border-radius: 999px; font-size: .8rem; }
+  .status-pill::before { content: ''; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
+  .status-pill.ok { background: #d1e7dd; color: #0f5132; }
+  .status-pill.ok:hover { background: #bcd9c9; }
+  .status-pill.down { background: #fff3cd; color: #664d03; }
+  .status-pill.down:hover { background: #f3e5b8; }
   main { display: flex; height: calc(100vh - 57px); }
   .sidebar { width: 300px; background: #fff; border-right: 1px solid #e5e5e5; overflow-y: auto; padding: 1rem; flex-shrink: 0; }
   .sidebar h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: #888; margin: .4rem 0; display: flex; justify-content: space-between; align-items: center; }
@@ -68,10 +72,7 @@
 <header>
   <h1>SVG Studio</h1>
   <div class="controls">
-    <label class="live-toggle" title="Automatically refresh when files change on disk">
-      <input type="checkbox" id="liveToggle" checked> Live
-    </label>
-    <button id="refreshBtn" class="secondary">Refresh</button>
+    <button id="statusPill" class="status-pill down" title="Connection to the server — click to reconnect and resync">Connecting…</button>
   </div>
 </header>
 <main>
@@ -100,7 +101,7 @@
       <span id="currentSvgName">No project selected</span>
       <div class="viewer-content" id="viewerContent">
       <div class="placeholder">Select or create a project to begin.<br><br>
-        Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — enable <b>Live</b> to watch it appear in real time.<br><br>
+        Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — changes appear here in real time.<br><br>
         New projects start empty: open <b>&lt;/&gt; Code</b> and paste SVG source, or use <b>⬆ Load SVG</b> to import a file.<br><br>
         Saved a whole project with <b>⬇ Save all</b>? Bring it back with <b>⬆ Load project</b>.</div>
       </div>
@@ -868,19 +869,47 @@ $('loadProjectBtn').addEventListener('click', () => {
   input.click();
 });
 
-$('refreshBtn').addEventListener('click', () => loadProjects());
-
-/* ---------- live updates (opt-in via Live toggle) ---------- */
+/* ---------- live updates & connection status ---------- */
 
 let evtSource = null;
-const timers = {};
+let reconnectTimer = null;
 
-function startLive() {
+function setStatus(connected) {
+  const pill = $('statusPill');
+  pill.classList.toggle('ok', connected);
+  pill.classList.toggle('down', !connected);
+  pill.textContent = connected ? 'Connected' : 'Reconnecting…';
+}
+
+// Bring every list and the canvas back in line with the server. Runs on every
+// (re)connect — including initial page load — so a dropped connection can
+// never leave the UI stale. loadProjects() handles first-time auto-select
+// itself; the explicit reloads cover an already-selected project.
+async function resync() {
+  const selected = state.project;
+  await loadProjects();
+  if (selected && state.project === selected) {
+    await Promise.all([loadVersions(), loadOptions()]);
+    if (!state.viewingVersion && !state.codeMode) await loadCurrent();
+  }
+}
+
+function connect() {
+  clearTimeout(reconnectTimer);
+  if (evtSource) evtSource.close();
   evtSource = new EventSource('/api/events');
-  const on = (ev, fn) => evtSource.addEventListener(ev, (e) => {
-    clearTimeout(timers[ev]);
-    timers[ev] = setTimeout(() => fn(JSON.parse(e.data || '{}')), 120);
-  });
+  evtSource.onopen = () => { setStatus(true); resync(); };
+  evtSource.onerror = () => {
+    setStatus(false);
+    // EventSource retries transient failures itself (retry: 1000 from the
+    // server); it only gives up permanently (CLOSED) on fatal responses —
+    // recreate it so retrying is truly continuous.
+    if (evtSource.readyState === EventSource.CLOSED) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, 2000);
+    }
+  };
+  const on = (ev, fn) => evtSource.addEventListener(ev, (e) => fn(JSON.parse(e.data || '{}')));
   on('current-changed', (d) => { if (d.project === state.project && !state.viewingVersion && !state.codeMode) loadCurrent(); });
   on('versions-changed', (d) => { if (d.project === state.project) loadVersions(); });
   on('projects-changed', () => loadProjects());
@@ -888,15 +917,11 @@ function startLive() {
   on('focus-changed', () => loadProjects());
   on('options-changed', (d) => { if (d.project === state.project) loadOptions(); });
 }
-function stopLive() {
-  if (evtSource) { evtSource.close(); evtSource = null; }
-}
-$('liveToggle').addEventListener('change', (e) => (e.target.checked ? startLive() : stopLive()));
 
-// Live is on by default (user can still toggle it off)
-startLive();
+// Click the pill to force an immediate reconnect + full resync
+$('statusPill').addEventListener('click', connect);
 
-loadProjects();
+connect();
 </script>
 </body>
 </html>
