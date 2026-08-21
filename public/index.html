@@ -29,7 +29,8 @@
   .sidebar li .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sidebar li.project { justify-content: flex-start; }
   .sidebar li.project .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
-  .sidebar li.project .row-right button { padding: .08rem .32rem; font-size: .66rem; line-height: 1.2; }
+  .sidebar h2 button.small { padding-left: .35rem; padding-right: .35rem; }
+  .sidebar li.project .row-right button { padding: .08rem .18rem; font-size: .66rem; line-height: 1.2; }
   #versionList li { justify-content: flex-start; }
   #versionList li .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
   #optionList li { justify-content: flex-start; }
@@ -44,11 +45,12 @@
   .banner.hidden { display: none; }
   .banner span { flex: 1; }
   .viewer-header { padding: .65rem 1rem; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; background: #fff; }
-  #currentSvgName { font-size: .95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #currentSvgName { position: absolute; top: .6rem; left: .75rem; z-index: 4; font-size: 1rem; font-weight: 600; color: #444; background: rgba(255,255,255,.88); border: 1px solid #e5e5e5; border-radius: 4px; padding: .18rem .55rem; max-width: calc(100% - 1.5rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .commit-row { display: flex; gap: .5rem; align-items: center; }
   .commit-row button { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding-left: .55rem; padding-right: .55rem; }
   .commit-row #forkBtn { margin-left: 2.25rem; }
   .commit-row input { padding: .4rem .6rem; border: 1px solid #ccc; border-radius: 4px; width: 210px; }
+  .canvas-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
   .viewer-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
   .viewer-content svg { max-width: 100%; max-height: 100%; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
   .placeholder { color: #999; text-align: center; max-width: 420px; line-height: 1.6; }
@@ -74,7 +76,7 @@
 </header>
 <main>
   <aside class="sidebar">
-    <h2>Projects <button class="small" id="newProjectBtn">+ New</button> <button class="small secondary" id="loadSvgBtn" title="Import a local .svg file as a new project">⬆ Load SVG</button></h2>
+    <h2>Projects <button class="small" id="newProjectBtn">+ New</button> <button class="small secondary" id="loadSvgBtn" title="Import a local .svg file as a new project">⬆ Load SVG</button> <button class="small secondary" id="loadProjectBtn" title="Import a saved project folder (current.svg + versions/)">⬆ Load project</button></h2>
     <ul id="projectList"></ul>
     <h2>Options <button class="small secondary" id="dismissAllBtn">Dismiss all</button></h2>
     <ul id="optionList"></ul>
@@ -83,7 +85,6 @@
   </aside>
   <section class="viewer">
     <div class="viewer-header">
-      <span id="currentSvgName">No project selected</span>
       <div class="commit-row">
         <input id="commitLabel" placeholder="version label (e.g. thicker strokes)">
         <button id="commitBtn" disabled>Commit</button>
@@ -95,10 +96,14 @@
         <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete project</button>
       </div>
     </div>
-    <div class="viewer-content" id="viewerContent">
+    <div class="canvas-wrap" id="canvasWrap">
+      <span id="currentSvgName">No project selected</span>
+      <div class="viewer-content" id="viewerContent">
       <div class="placeholder">Select or create a project to begin.<br><br>
         Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — enable <b>Live</b> to watch it appear in real time.<br><br>
-        New projects start empty: open <b>&lt;/&gt; Code</b> and paste SVG source, or use <b>⬆ Load SVG</b> to import a file.</div>
+        New projects start empty: open <b>&lt;/&gt; Code</b> and paste SVG source, or use <b>⬆ Load SVG</b> to import a file.<br><br>
+        Saved a whole project with <b>⬇ Save all</b>? Bring it back with <b>⬆ Load project</b>.</div>
+      </div>
     </div>
     <div id="codeEditor" class="hidden">
       <div class="code-toolbar">
@@ -565,7 +570,13 @@ $('saveAllBtn').addEventListener('click', async () => {
       path: `/api/projects/${p}/versions/${encodeURIComponent(v.id)}`,
       name: `${state.project}-${v.id}`
     }));
-    files.push({ path: `/api/projects/${p}/current`, name: `${state.project}.svg` });
+    // Export whatever is actively displayed as current.svg, so ⬆ Load project restores that view.
+    files.push({
+      path: state.viewingVersion
+        ? `/api/projects/${p}/versions/${encodeURIComponent(state.viewingVersion)}`
+        : `/api/projects/${p}/current`,
+      name: `${state.project}-current.svg`
+    });
 
     // Preferred: write straight into a real folder (Chromium File System Access API).
     // Creates/uses a subfolder named after the project — no zip, no loose files.
@@ -601,7 +612,7 @@ $('saveAllBtn').addEventListener('click', async () => {
 function setCodeMode(on) {
   state.codeMode = on;
   $('codeEditor').classList.toggle('hidden', !on);
-  viewerContent.style.display = on ? 'none' : '';
+  $('canvasWrap').style.display = on ? 'none' : '';
   svgInfo.style.display = on ? 'none' : '';
 }
 
@@ -784,6 +795,70 @@ $('loadSvgBtn').addEventListener('click', () => {
       });
       await loadProjects(name.trim());
       toast(`Loaded ${file.name} into "${name.trim()}"`);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+  input.click();
+});
+
+// Import a saved project folder (current.svg + versions/) as a new project
+$('loadProjectBtn').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.webkitdirectory = true;
+  input.addEventListener('change', async () => {
+    const files = [...(input.files || [])];
+    if (!files.length) return;
+    const root = files[0].webkitRelativePath.split('/')[0];
+    const base = root.toLowerCase().replace(/[^a-z0-9_-]+/g, '-'); // ⬇ Save all prefixes files with this
+    const rel = (f) => f.webkitRelativePath;
+    const baseName = (f) => rel(f).split('/').pop();
+    // Active view: "<project>-current.svg" (⬇ Save all layout) or a plain "current.svg"
+    const currentFile = files.find((f) => baseName(f).toLowerCase() === `${base}-current.svg`)
+      || files.find((f) => /(^|\/)current\.svg$/i.test(rel(f)));
+    if (!currentFile) { toast(`No ${base}-current.svg (or current.svg) found in that folder`); return; }
+    const suggested = root.toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64) || 'imported-project';
+    const name = prompt('New project name:', suggested);
+    if (!name) return;
+    const projectName = name.trim();
+    try {
+      await api('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: projectName })
+      });
+      await api(`/api/projects/${encodeURIComponent(projectName)}/current`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/svg+xml' },
+        body: await currentFile.text()
+      });
+      // Versions: flat "<project>-vNNN-label.svg" files, or anything inside a versions/ folder
+      const versionFiles = files.filter((f) => {
+        if (f === currentFile) return false;
+        const n = baseName(f);
+        if (new RegExp(`^${base}-v\\d{3}-[a-z0-9-]+\\.svg$`, 'i').test(n)) return true;
+        return /\/versions\//.test(rel(f)) && /^v\d{3}-[a-z0-9-]+\.svg$/i.test(n);
+      });
+      let imported = 0;
+      for (const f of versionFiles) {
+        const n = baseName(f);
+        const id = n.toLowerCase().startsWith(`${base}-`) ? n.slice(base.length + 1) : n;
+        if (!/^v\d{3}-[a-z0-9-]+\.svg$/i.test(id)) continue;
+        try {
+          await api(`/api/projects/${encodeURIComponent(projectName)}/versions/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/svg+xml' },
+            body: await f.text()
+          });
+          imported++;
+        } catch { /* skip unreadable version files */ }
+      }
+      await loadProjects(projectName);
+      toast(`Loaded "${root}" as "${projectName}"${imported ? ` with ${imported} version${imported > 1 ? 's' : ''}` : ''}`);
     } catch (err) {
       toast(err.message);
     }

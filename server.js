@@ -340,6 +340,28 @@ app.post('/api/projects/:project/commit', async (req, res) => {
   }
 });
 
+// Direct-write a version file (used by "Load project" folder import)
+app.put('/api/projects/:project/versions/:id', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const id = req.params.id;
+  if (!VERSION_ID_RE.test(id)) {
+    return res.status(400).json({ error: 'Invalid version id' });
+  }
+  const svg = typeof req.body === 'string' ? req.body : req.body && req.body.svg;
+  if (!svg || !String(svg).includes('<svg')) {
+    return res.status(400).json({ error: 'Body must contain SVG markup' });
+  }
+  try {
+    const versionsDir = path.join(dir, 'versions');
+    await fsp.mkdir(versionsDir, { recursive: true });
+    await fsp.writeFile(path.join(versionsDir, id), String(svg));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/projects/:project/versions', async (req, res) => {
   const dir = getProjectDir(req, res);
   if (!dir) return;
