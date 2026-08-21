@@ -564,6 +564,8 @@ $('saveSvgBtn').addEventListener('click', async () => {
 $('saveAllBtn').addEventListener('click', async () => {
   if (!state.project) return;
   const p = encodeURIComponent(state.project);
+  // Sanitize project name for filesystem (same as load project handler)
+  const safeProjectName = state.project.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'project';
   try {
     const versions = await (await api(`/api/projects/${p}/versions`)).json(); // newest first
     const files = versions.reverse().map((v) => ({
@@ -582,7 +584,7 @@ $('saveAllBtn').addEventListener('click', async () => {
     // Creates/uses a subfolder named after the project — no zip, no loose files.
     if (window.showDirectoryPicker) {
       const dir = await showDirectoryPicker({ mode: 'readwrite' });
-      const projDir = await dir.getDirectoryHandle(state.project, { create: true });
+      const projDir = await dir.getDirectoryHandle(safeProjectName, { create: true });
       for (const f of files) {
         const fh = await projDir.getFileHandle(f.name, { create: true });
         const writable = await fh.createWritable();
