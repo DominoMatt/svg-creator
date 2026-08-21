@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
   <g transform="translate(-33.75 -82.5) scale(1.25) rotate(90 107 186)">
   <g fill="#ffffff" stroke="#000000" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
-    <!-- tail -->
-    <path d="M142 172 L206 134 C195 162 195 218 206 246 L142 208 Z"/>
-    <!-- dorsal fin: swept back toward tail -->
-    <path d="M72 150 Q87 126 114 112 L136 162"/>
-    <!-- belly fin -->
-    <path d="M80 230 Q86 253 112 262 L133 219"/>
+    <!-- tail: fuller fan with curved edges -->
+    <path d="M142 172 C168 150 196 128 210 130 C198 160 198 220 210 250 C196 252 168 230 142 208 Z"/>
+    <!-- dorsal fin: swept back, curved trailing edge -->
+    <path d="M72 150 Q87 126 114 112 Q124 140 136 162"/>
+    <!-- belly fin: curved trailing edge -->
+    <path d="M80 230 Q86 253 112 262 Q122 240 133 219"/>
     <!-- body -->
     <path d="M24 190 C36 128 148 128 160 190 C148 252 36 252 24 190 Z"/>
     <!-- eye -->
@@ -19,8 +19,8 @@
     <!-- head line -->
     <path d="M74 158 Q62 190 76 220" stroke-width="3"/>
     <!-- gills -->
-    <path d="M82 166 Q94 182 82 198" stroke-width="2"/>
-    <path d="M98 171 Q106 182 98 193" stroke-width="2"/>
+    <path d="M80 166 Q92 182 80 198" stroke-width="2"/>
+    <path d="M96 171 Q104 182 96 193" stroke-width="2"/>
   </g>
   </g>
 </svg>

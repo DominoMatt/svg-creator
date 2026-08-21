@@ -46,6 +46,7 @@
   .viewer-header { padding: .65rem 1rem; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; background: #fff; }
   #currentSvgName { font-size: .95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .commit-row { display: flex; gap: .5rem; align-items: center; }
+  .commit-row button { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding-left: .55rem; padding-right: .55rem; }
   .commit-row #forkBtn { margin-left: 2.25rem; }
   .commit-row input { padding: .4rem .6rem; border: 1px solid #ccc; border-radius: 4px; width: 210px; }
   .viewer-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
@@ -91,7 +92,7 @@
         <button id="saveSvgBtn" class="secondary" disabled title="Download this SVG to your computer">⬇ Save</button>
         <button id="saveAllBtn" class="secondary" disabled title="Save current.svg plus every committed version into a folder of plain .svg files">⬇ Save all</button>
         <button id="codeBtn" class="secondary" disabled title="View and edit the raw SVG source">&lt;/&gt; Code</button>
-        <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete</button>
+        <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete project</button>
       </div>
     </div>
     <div class="viewer-content" id="viewerContent">
