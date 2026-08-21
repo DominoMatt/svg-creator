@@ -617,6 +617,63 @@ app.post('/api/projects/:project/fork', async (req, res) => {
   }
 });
 
+// Rename a project folder. If the agent 🎯 target pointed at the old name,
+// .focus.json moves with it so agents keep editing the same design.
+app.post('/api/projects/:project/rename', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const name = String((req.body && req.body.name) || '').trim();
+  if (!PROJECT_NAME_RE.test(name)) {
+    return res.status(400).json({ error: 'Invalid new project name' });
+  }
+  if (name === req.params.project) return res.json({ ok: true, name });
+  const dest = safeProjectPath(name);
+  try {
+    try {
+      await fsp.access(dest);
+      return res.status(409).json({ error: `Project "${name}" already exists` });
+    } catch {}
+    await fsp.rename(dir, dest);
+    try {
+      const focusPath = path.join(SVG_DIR, '.focus.json');
+      const focus = JSON.parse(await fsp.readFile(focusPath, 'utf8'));
+      if (focus && focus.project === req.params.project) {
+        await fsp.writeFile(focusPath, JSON.stringify({ project: name }, null, 2));
+      }
+    } catch {}
+    broadcastDebounced('projects-changed', {}, 50);
+    res.json({ ok: true, name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Rename a version's label while keeping its vNNN number:
+// v001-old-label.svg → v001-new-label.svg
+app.post('/api/projects/:project/versions/:id/rename', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const id = req.params.id;
+  if (!VERSION_ID_RE.test(id)) return res.status(400).json({ error: 'Invalid version id' });
+  const label = sanitizeLabel(req.body && req.body.label);
+  const newId = `${id.slice(0, 4)}-${label}.svg`;
+  if (!VERSION_ID_RE.test(newId)) return res.status(400).json({ error: 'Invalid label' });
+  if (newId === id) return res.json({ ok: true, id });
+  try {
+    const to = path.join(dir, 'versions', newId);
+    try {
+      await fsp.access(to);
+      return res.status(409).json({ error: `Version "${newId.replace(/\.svg$/, '')}" already exists` });
+    } catch {}
+    await fsp.rename(path.join(dir, 'versions', id), to);
+    broadcastDebounced('versions-changed', { project: req.params.project }, 50);
+    res.json({ ok: true, id: newId });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Version not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`SVG Studio server running at http://localhost:${PORT}`);
   console.log(`Projects directory: ${SVG_DIR}`);

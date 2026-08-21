@@ -27,11 +27,20 @@
   .sidebar li.active { background: #e7f1ff; color: #0366d6; font-weight: 600; }
   .sidebar input[type="checkbox"] { accent-color: #dc3545; width: .95rem; height: .95rem; cursor: pointer; flex-shrink: 0; }
   .sidebar li .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .badge { font-size: .68rem; background: #e9ecef; color: #555; padding: .08rem .45rem; border-radius: 10px; flex-shrink: 0; }
+  .sidebar li.project { justify-content: flex-start; }
+  .sidebar li.project .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
+  .sidebar li.project .row-right button { padding: .08rem .32rem; font-size: .66rem; line-height: 1.2; }
+  #versionList li { justify-content: flex-start; }
+  #versionList li .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
+  #optionList li { justify-content: flex-start; }
+  #optionList li .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
+  #versionList li button.small { padding: .08rem .32rem; font-size: .66rem; line-height: 1.2; }
+  #versionList li button.small.dl { font-size: .8rem; padding: .1rem .4rem; }
+  .badge { font-size: .68rem; background: #e7f1ff; color: #0366d6; padding: .14rem .4rem; border-radius: 5px; min-width: 1.6em; text-align: center; flex-shrink: 0; }
   .empty { color: #aaa; font-size: .82rem; cursor: default !important; }
   .empty:hover { background: transparent !important; }
-  .viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .banner { background: #fff3cd; color: #664d03; padding: .5rem 1rem; font-size: .85rem; display: flex; gap: .75rem; align-items: center; border-bottom: 1px solid #ffe69c; }
+  .viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  .banner { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; background: #fff3cd; color: #664d03; padding: .5rem 1rem; font-size: .85rem; display: flex; gap: .75rem; align-items: center; border-top: 1px solid #ffe69c; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
   .banner.hidden { display: none; }
   .banner span { flex: 1; }
   .viewer-header { padding: .65rem 1rem; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; background: #fff; }
@@ -64,7 +73,7 @@
 </header>
 <main>
   <aside class="sidebar">
-    <h2>Projects <button class="small" id="newProjectBtn">+ New</button></h2>
+    <h2>Projects <button class="small" id="newProjectBtn">+ New</button> <button class="small secondary" id="loadSvgBtn" title="Import a local .svg file as a new project">⬆ Load SVG</button></h2>
     <ul id="projectList"></ul>
     <h2>Options <button class="small secondary" id="dismissAllBtn">Dismiss all</button></h2>
     <ul id="optionList"></ul>
@@ -72,11 +81,6 @@
     <ul id="versionList"></ul>
   </aside>
   <section class="viewer">
-    <div class="banner hidden" id="viewBanner">
-      <span id="viewBannerText"></span>
-      <button class="small secondary" id="forkFromVersionBtn">Fork from here</button>
-      <button class="small secondary" id="backToCurrentBtn">Back to current</button>
-    </div>
     <div class="viewer-header">
       <span id="currentSvgName">No project selected</span>
       <div class="commit-row">
@@ -92,7 +96,8 @@
     </div>
     <div class="viewer-content" id="viewerContent">
       <div class="placeholder">Select or create a project to begin.<br><br>
-        Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — enable <b>Live</b> to watch it appear in real time.</div>
+        Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — enable <b>Live</b> to watch it appear in real time.<br><br>
+        New projects start empty: open <b>&lt;/&gt; Code</b> and paste SVG source, or use <b>⬆ Load SVG</b> to import a file.</div>
     </div>
     <div id="codeEditor" class="hidden">
       <div class="code-toolbar">
@@ -103,6 +108,11 @@
       <textarea id="codeArea" spellcheck="false"></textarea>
     </div>
     <div class="info" id="svgInfo"></div>
+    <div class="banner hidden" id="viewBanner">
+      <span id="viewBannerText"></span>
+      <button class="small secondary" id="forkFromVersionBtn">Fork from here</button>
+      <button class="small secondary" id="backToCurrentBtn">Back to current</button>
+    </div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -160,13 +170,37 @@ async function loadProjects(selectName) {
     const badge = document.createElement('span');
     badge.className = 'badge';
     badge.textContent = p.versionCount;
-    li.append(name, badge);
+    li.classList.add('project');
+    li.append(name);
+    const ren = document.createElement('button');
+    ren.className = 'small secondary';
+    ren.textContent = '✎';
+    ren.title = 'Rename project';
+    ren.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const newName = prompt(`Rename project "${p.name}" to:`, p.name);
+      if (!newName || !newName.trim() || newName.trim() === p.name) return;
+      try {
+        await api(`/api/projects/${encodeURIComponent(p.name)}/rename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName.trim() })
+        });
+        toast(`Renamed to "${newName.trim()}"`);
+        await loadProjects(state.project === p.name ? newName.trim() : undefined);
+      } catch (err) { toast(err.message); }
+    });
+    li.append(ren);
+    const right = document.createElement('span');
+    right.className = 'row-right';
     if (state.target === p.name) {
       const mark = document.createElement('span');
       mark.textContent = '🎯';
       mark.title = 'Agent target — this is the project agents will edit';
-      li.prepend(mark);
+      right.append(mark);
     }
+    right.append(ren, badge);
+    li.append(right);
     li.addEventListener('click', () => selectProject(p.name));
     projectList.appendChild(li);
   }
@@ -221,7 +255,7 @@ async function loadCurrent() {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/current`);
     renderSvg(await res.text(), `${state.project}/current.svg`);
   } catch {
-    viewerContent.innerHTML = '<div class="placeholder">No <code>current.svg</code> yet.<br>Ask your agent to PUT one, or drop a file into the project folder.</div>';
+    viewerContent.innerHTML = '<div class="placeholder">No <code>current.svg</code> yet.<br>Click <b>&lt;/&gt; Code</b> to paste or type SVG source, then Save.<br>Or ask your agent to write one, use <b>⬆ Load SVG</b>,<br>or drop a file into the project folder.</div>';
     svgInfo.textContent = '';
   }
 }
@@ -311,7 +345,10 @@ async function loadOptions() {
         } catch (err) { toast(err.message); }
       });
 
-      li.append(label, promote, commitOpt, dismiss);
+      const right = document.createElement('span');
+      right.className = 'row-right';
+      right.append(promote, commitOpt, dismiss);
+      li.append(label, right);
       li.addEventListener('click', () => previewOption(o.id));
       optionList.appendChild(li);
     }
@@ -408,11 +445,25 @@ async function loadVersions() {
       restore.title = 'Copy this version back into current.svg (not committed automatically)';
       restore.addEventListener('click', (e) => { e.stopPropagation(); restoreVersion(v.id); });
       const save = document.createElement('button');
-      save.className = 'small secondary';
+      save.className = 'small secondary dl';
       save.textContent = '⬇';
       save.title = 'Download this version as .svg';
       save.addEventListener('click', (e) => { e.stopPropagation(); downloadVersion(v.id); });
-      li.append(checkbox, label, restore, save);
+      const ren = document.createElement('button');
+      ren.className = 'small secondary';
+      ren.textContent = '✎';
+      ren.title = 'Rename this version';
+      ren.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const currentLabel = v.id.replace(/^v\d+-/, '').replace(/\.svg$/, '');
+        const label = prompt(`New label for ${v.id.replace(/\.svg$/, '')}:`, currentLabel);
+        if (!label || !label.trim() || label.trim() === currentLabel) return;
+        renameVersion(v.id, label.trim());
+      });
+      const right = document.createElement('span');
+      right.className = 'row-right';
+      right.append(ren, save, restore);
+      li.append(checkbox, label, right);
       li.addEventListener('click', () => viewVersion(v.id));
       versionList.appendChild(li);
     }
@@ -479,6 +530,21 @@ async function downloadVersion(id) {
   } catch (err) { toast(err.message); }
 }
 
+async function renameVersion(id, label) {
+  if (!state.project) return;
+  const p = encodeURIComponent(state.project);
+  try {
+    const data = await (await api(`/api/projects/${p}/versions/${encodeURIComponent(id)}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label })
+    })).json();
+    if (state.viewingVersion === id) state.viewingVersion = data.id;
+    toast(`Renamed to ${data.id.replace(/\.svg$/, '')}`);
+    loadVersions();
+  } catch (err) { toast(err.message); }
+}
+
 $('saveSvgBtn').addEventListener('click', async () => {
   if (!state.project) return;
   if (state.viewingVersion) return downloadVersion(state.viewingVersion);
@@ -541,13 +607,20 @@ function setCodeMode(on) {
 $('codeBtn').addEventListener('click', async () => {
   if (!state.project) return;
   if (state.viewingVersion) { toast('Go back to current before editing source'); return; }
+  const p = encodeURIComponent(state.project);
+  let text = '';
+  let isNew = true;
   try {
-    const res = await api(`/api/projects/${encodeURIComponent(state.project)}/current`);
-    $('codeArea').value = await res.text();
-    $('codeHint').textContent = `Editing ${state.project}/current.svg — plain SVG source`;
-    setCodeMode(true);
-    $('codeArea').focus();
-  } catch (err) { toast(err.message); }
+    const res = await api(`/api/projects/${p}/current`);
+    text = await res.text();
+    isNew = false;
+  } catch {} // no current.svg yet — start from an empty editor
+  $('codeArea').value = text;
+  $('codeHint').textContent = isNew
+    ? `New ${state.project}/current.svg — paste or type SVG source, then Save`
+    : `Editing ${state.project}/current.svg — plain SVG source`;
+  setCodeMode(true);
+  $('codeArea').focus();
 });
 
 $('codeCancelBtn').addEventListener('click', () => {
@@ -578,6 +651,14 @@ $('codeArea').addEventListener('keydown', (e) => {
 });
 
 /* ---------- commit & fork ---------- */
+
+// Enter in the label box = click Commit
+commitLabel.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    commitBtn.click();
+  }
+});
 
 commitBtn.addEventListener('click', async () => {
   if (!state.project) return;
@@ -671,6 +752,42 @@ $('newProjectBtn').addEventListener('click', async () => {
   } catch (err) {
     toast(err.message);
   }
+});
+
+// Import a local .svg file as a brand-new project
+$('loadSvgBtn').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.svg,image/svg+xml';
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const suggested = file.name.replace(/\.svg$/i, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64) || 'imported-svg';
+      const name = prompt('New project name:', suggested);
+      if (!name) return;
+      await api('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() })
+      });
+      await api(`/api/projects/${encodeURIComponent(name.trim())}/current`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/svg+xml' },
+        body: text
+      });
+      await loadProjects(name.trim());
+      toast(`Loaded ${file.name} into "${name.trim()}"`);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+  input.click();
 });
 
 $('refreshBtn').addEventListener('click', () => loadProjects());

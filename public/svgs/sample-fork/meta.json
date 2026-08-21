@@ -1,9 +1,0 @@
-{
-  "name": "sample-fork",
-  "description": "",
-  "created": "2026-08-21T10:13:38.852Z",
-  "forkedFrom": {
-    "project": "sample",
-    "version": null
-  }
-}
