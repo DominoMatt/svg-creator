@@ -478,6 +478,39 @@ app.delete('/api/projects/:project/options/:id', async (req, res) => {
   }
 });
 
+// Bulk-dismiss options. Mirrors POST /versions/delete: requires
+// {"ids": [...], "confirm": true} as a server-side guard; the UI shows a
+// confirmation dialog listing what will be removed first. Also drops the ids
+// from state.json so their ✓-committed marks don't linger.
+app.post('/api/projects/:project/options/delete', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const ids = req.body && Array.isArray(req.body.ids) ? req.body.ids : null;
+  if (!ids || !ids.length) {
+    return res.status(400).json({ error: 'Body must be {"ids": ["option-a-..."], "confirm": true}' });
+  }
+  if ((req.body && req.body.confirm) !== true) {
+    return res.status(400).json({ error: 'Confirmation required: {"confirm": true}' });
+  }
+  for (const id of ids) {
+    if (!OPTION_ID_RE.test(String(id))) return res.status(400).json({ error: `Invalid option id: ${id}` });
+  }
+  try {
+    const optionsDir = path.join(dir, 'options');
+    let deleted = 0;
+    for (const id of ids) {
+      await fsp.rm(path.join(optionsDir, String(id)), { force: true });
+      deleted++;
+    }
+    const committed = new Set(await readCommittedIds(optionsDir));
+    for (const id of ids) committed.delete(String(id));
+    await writeCommittedIds(optionsDir, [...committed]);
+    res.json({ ok: true, deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Promote an option into current.svg. The option itself stays in the tray.
 app.post('/api/projects/:project/select', async (req, res) => {
   const dir = getProjectDir(req, res);

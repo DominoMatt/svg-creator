@@ -34,6 +34,8 @@
   .sidebar li.project { justify-content: flex-start; }
   .sidebar li.project .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
   .sidebar h2 button.small { padding-left: .35rem; padding-right: .35rem; }
+  .h2-actions { display: inline-flex; gap: .35rem; align-items: center; }
+  .batch-bar { display: none; align-items: center; gap: .35rem; }
   .sidebar li.project .row-right button { padding: .08rem .18rem; font-size: .66rem; line-height: 1.2; }
   #versionList li { justify-content: flex-start; }
   #versionList li .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
@@ -79,9 +81,9 @@
   <aside class="sidebar">
     <h2>Projects <button class="small" id="newProjectBtn">+ New</button> <button class="small secondary" id="loadSvgBtn" title="Import a local .svg file as a new project">⬆ Load SVG</button> <button class="small secondary" id="loadProjectBtn" title="Import a saved project folder (current.svg + versions/)">⬆ Load project</button></h2>
     <ul id="projectList"></ul>
-    <h2>Options <button class="small secondary" id="dismissAllBtn">Dismiss all</button></h2>
+    <h2>Options <span class="h2-actions"><button class="small secondary" id="dismissAllBtn">Dismiss all</button></span></h2>
     <ul id="optionList"></ul>
-    <h2>History <button class="small danger" id="deleteVersionsBtn" style="display:none"></button></h2>
+    <h2>History <span class="h2-actions"><span class="batch-bar" id="batchBar"></span></span></h2>
     <ul id="versionList"></ul>
   </aside>
   <section class="viewer">
@@ -147,6 +149,14 @@ async function api(path, opts) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
   return res;
 }
+
+// One shared selection group spanning both lists, with a single Delete action
+// that covers whatever is checked across them. Created here, near the top of
+// the script, because the batch action below registers during initial
+// execution — before any list is rendered.
+const selection = createBatchSelector([versionList, optionList]);
+const batchBar = createBatchBar($('batchBar'));
+selection.onChange(() => batchBar.refresh(selection.ids().length));
 
 /* ---------- projects ---------- */
 
@@ -293,11 +303,13 @@ async function loadOptions() {
       li.className = 'empty';
       li.textContent = 'No pending options';
       optionList.appendChild(li);
+      batchBar.refresh(selection.ids().length);
       return;
     }
     for (const o of options) {
       const li = document.createElement('li');
       if (o.committed) li.title = 'Already committed to history';
+      const checkbox = selection.makeCheckbox(o.id);
       const label = document.createElement('span');
       label.className = 'name';
       label.textContent = (o.committed ? '✓ ' : '') + o.id.replace(/\.svg$/, '').replace(/^option-/, '');
@@ -355,10 +367,11 @@ async function loadOptions() {
       const right = document.createElement('span');
       right.className = 'row-right';
       right.append(promote, commitOpt, dismiss);
-      li.append(label, right);
+      li.append(checkbox, label, right);
       li.addEventListener('click', () => previewOption(o.id));
       optionList.appendChild(li);
     }
+    batchBar.refresh(selection.ids().length);
   } catch {
     optionList.innerHTML = '<li class="empty">Options unavailable</li>';
   }
@@ -378,47 +391,127 @@ async function previewOption(id) {
 $('dismissAllBtn').addEventListener('click', async () => {
   if (!state.project) return;
   try {
+    const options = await (await api(`/api/projects/${encodeURIComponent(state.project)}/options`)).json();
+    if (!options.length) { toast('No options to dismiss'); return; }
+    const msg = `Dismiss all ${options.length} option${options.length > 1 ? 's' : ''}?\n\n${options.map((o) => '• ' + o.id.replace(/\.svg$/, '').replace(/^option-/, '')).join('\n')}`;
+    if (!confirm(msg)) return;
     await api(`/api/projects/${encodeURIComponent(state.project)}/options`, { method: 'DELETE' });
     toast('All options dismissed');
     loadOptions();
   } catch (err) { toast(err.message); }
 });
 
-/* ---------- history ---------- */
+/* ---------- batch selection (generic, shared by lists) ---------- */
 
-function checkedVersionIds() {
-  return [...versionList.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.dataset.id);
+// Tracks which rows are checked, optionally across several lists at once (pass
+// an array) so their checkboxes form a single selection group. Deliberately
+// agnostic of what a selection is *for* — actions live on a BatchBar instead,
+// so new kinds of batch operation can be added without touching
+// list-rendering code.
+function createBatchSelector(listEl) {
+  const els = Array.isArray(listEl) ? listEl : [listEl];
+  const listeners = new Set();
+  const emit = () => listeners.forEach((fn) => fn());
+  const checkedIn = (el) => [...el.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.dataset.id);
+  return {
+    makeCheckbox(id, title = 'Select') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.id = id;
+      cb.title = title;
+      cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('change', emit);
+      return cb;
+    },
+    ids() {
+      return els.flatMap(checkedIn);
+    },
+    idsIn(el) {
+      return checkedIn(el);
+    },
+    onChange(fn) { listeners.add(fn); }
+  };
 }
 
-function updateDeleteVersionsBtn() {
-  const btn = $('deleteVersionsBtn');
-  const ids = checkedVersionIds();
-  btn.style.display = ids.length ? 'inline-block' : 'none';
-  btn.textContent = `Delete selected (${ids.length})`;
-}
-
-$('deleteVersionsBtn').addEventListener('click', async () => {
-  const ids = checkedVersionIds();
-  if (!ids.length || !state.project) return;
-  const msg = `Delete ${ids.length} committed version${ids.length > 1 ? 's' : ''}?\n\n${ids.map((i) => '• ' + i.replace(/\.svg$/, '')).join('\n')}\n\nThis cannot be undone.`;
-  if (!confirm(msg)) return;
-  try {
-    await api(`/api/projects/${encodeURIComponent(state.project)}/versions/delete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, confirm: true })
-    });
-    toast(`Deleted ${ids.length} version${ids.length > 1 ? 's' : ''}`);
-    if (state.viewingVersion && ids.includes(state.viewingVersion)) {
-      state.viewingVersion = null;
-      viewBanner.classList.add('hidden');
-      loadCurrent();
+// Renders one button per registered action inside a container; each action
+// decides for which selection sizes it applies. Bars refresh whenever their
+// list's selector changes.
+function createBatchBar(containerEl) {
+  const buttons = [];
+  function refresh(count) {
+    let anyVisible = false;
+    for (const b of buttons) {
+      const show = b.when(count);
+      if (show && b.label) b.el.textContent = b.label(count);
+      b.el.style.display = show ? '' : 'none';
+      anyVisible = anyVisible || show;
     }
-    loadVersions();
-  } catch (err) {
-    toast(err.message);
+    containerEl.style.display = anyVisible ? 'inline-flex' : 'none';
+  }
+  return {
+    register({ label, title, className = 'danger', when = (n) => n > 0, run }) {
+      const el = document.createElement('button');
+      el.className = `small ${className}`;
+      if (title) el.title = title;
+      el.style.display = 'none';
+      el.addEventListener('click', () => run());
+      containerEl.appendChild(el);
+      buttons.push({ el, label, when });
+      return el;
+    },
+    refresh
+  };
+}
+
+/* ---------- shared batch action (whole selection group) ---------- */
+
+batchBar.register({
+  label: (n) => `Delete selected (${n})`,
+  title: 'Delete the selected committed versions and dismiss the selected options',
+  className: 'danger',
+  run: async () => {
+    if (!state.project) return;
+    const versionIds = selection.idsIn(versionList);
+    const optionIds = selection.idsIn(optionList);
+    const total = versionIds.length + optionIds.length;
+    if (!total) return;
+    const lines = [];
+    if (versionIds.length) lines.push('Versions (deleted permanently):', ...versionIds.map((i) => '• ' + i.replace(/\.svg$/, '')));
+    if (optionIds.length) lines.push('Options (dismissed):', ...optionIds.map((i) => '• ' + i.replace(/\.svg$/, '').replace(/^option-/, '')));
+    if (!confirm(`Delete ${total} item${total > 1 ? 's' : ''}?\n\n${lines.join('\n')}\n\nThis cannot be undone.`)) return;
+    try {
+      if (versionIds.length) {
+        await api(`/api/projects/${encodeURIComponent(state.project)}/versions/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: versionIds, confirm: true })
+        });
+      }
+      if (optionIds.length) {
+        await api(`/api/projects/${encodeURIComponent(state.project)}/options/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: optionIds, confirm: true })
+        });
+      }
+      const bits = [];
+      if (versionIds.length) bits.push(`deleted ${versionIds.length} version${versionIds.length > 1 ? 's' : ''}`);
+      if (optionIds.length) bits.push(`dismissed ${optionIds.length} option${optionIds.length > 1 ? 's' : ''}`);
+      toast(bits.join(', ').replace(/^./, (c) => c.toUpperCase()));
+      if (state.viewingVersion && versionIds.includes(state.viewingVersion)) {
+        state.viewingVersion = null;
+        viewBanner.classList.add('hidden');
+        loadCurrent();
+      }
+      loadVersions();
+      loadOptions();
+    } catch (err) {
+      toast(err.message);
+    }
   }
 });
+
+/* ---------- history ---------- */
 
 async function loadVersions() {
   if (!state.project) return;
@@ -430,18 +523,13 @@ async function loadVersions() {
       li.className = 'empty';
       li.textContent = 'Nothing committed yet';
       versionList.appendChild(li);
-      updateDeleteVersionsBtn();
+      batchBar.refresh(selection.ids().length);
       return;
     }
     for (const v of versions) {
       const li = document.createElement('li');
       if (state.viewingVersion === v.id) li.classList.add('active');
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.dataset.id = v.id;
-      checkbox.title = 'Select for deletion';
-      checkbox.addEventListener('click', (e) => e.stopPropagation());
-      checkbox.addEventListener('change', updateDeleteVersionsBtn);
+      const checkbox = selection.makeCheckbox(v.id);
       const label = document.createElement('span');
       label.className = 'name';
       label.textContent = v.id.replace(/\.svg$/, '');
@@ -474,7 +562,7 @@ async function loadVersions() {
       li.addEventListener('click', () => viewVersion(v.id));
       versionList.appendChild(li);
     }
-    updateDeleteVersionsBtn();
+    batchBar.refresh(selection.ids().length);
   } catch {
     versionList.innerHTML = '<li class="empty">No versions folder</li>';
   }
