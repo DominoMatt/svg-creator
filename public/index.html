@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- AI agents: this page is the human-facing UI of SVG Studio, a local server
      where a human and an AI agent iteratively design SVGs. You participate
-     through the API, not this page: GET /api is a route index and
-     GET /api/conventions returns the workflow rules you must follow. -->
+     through the API only — not this page, not the filesystem: GET /api is a
+     route index and GET /api/conventions returns the workflow rules you must
+     follow. -->
 <meta name="api-index" content="/api">
 <meta name="agent-conventions" content="/api/conventions">
 <title>SVG Studio</title>
@@ -110,7 +111,7 @@
       <div class="viewer-content" id="viewerContent">
       <span id="currentSvgName">No project selected</span>
       <div class="placeholder">Select or create a project to begin.<br><br>
-        Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — changes appear here in real time.<br><br>
+        Your AI agent's changes appear here in real time.<br><br>
         New projects start empty: open <b>&lt;/&gt; Code</b> and paste SVG source, or use <b>⬆ Load SVG</b> to import a file.<br><br>
         Saved a whole project with <b>⬇ Save all</b>? Bring it back with <b>⬆ Load project</b>.</div>
       </div>
@@ -222,6 +223,15 @@ async function loadProjects(selectName) {
     li.addEventListener('click', () => selectProject(p.name));
     projectList.appendChild(li);
   }
+  // No 🎯 target (never set, or its project was deleted): say so, since agents
+  // will stop and ask rather than guess.
+  if (projects.length && !state.target) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'No 🎯 target — agents will ask which project to edit';
+    li.title = 'Select a project and click 🎯 Target current.svg';
+    projectList.appendChild(li);
+  }
   if (selectName || (!state.project && projects.length)) {
     await selectProject(selectName || projects[0].name);
   } else if (!projects.length) {
@@ -267,7 +277,7 @@ async function loadCurrent() {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/current`);
     renderSvg(await res.text(), `${state.project}/current.svg`);
   } catch {
-    viewerContent.innerHTML = '<div class="placeholder">No <code>current.svg</code> yet.<br>Click <b>&lt;/&gt; Code</b> to paste or type SVG source, then Save.<br>Or ask your agent to write one, use <b>⬆ Load SVG</b>,<br>or drop a file into the project folder.</div>';
+    viewerContent.innerHTML = '<div class="placeholder">No <code>current.svg</code> yet.<br>Click <b>&lt;/&gt; Code</b> to paste or type SVG source, then Save.<br>Or ask your agent to write one, or use <b>⬆ Load SVG</b>.</div>';
     svgInfo.textContent = '';
   }
 }
