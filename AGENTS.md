@@ -17,8 +17,10 @@ public/svgs/
 ```
 
 Useful HTTP endpoints (mirror the same files, for when REST is more convenient):
-`GET|PUT /api/projects/:name/current`, `GET /api/projects/:name/{versions,options}`,
-`POST /api/projects/:name/{commit,select,rollback/:id,fork}`, `GET /api/focus`.
+`GET /api` (route index), `GET|PUT /api/projects/:name/current`,
+`GET|POST /api/projects/:name/options`, `GET /api/projects/:name/versions`,
+`POST /api/projects/:name/{commit,select,rollback/:id,fork}`,
+`GET|PUT /api/focus`, `GET /api/conventions`.
 
 ## Workflow rules
 
@@ -37,7 +39,8 @@ Useful HTTP endpoints (mirror the same files, for when REST is more convenient):
    (`[a-zA-Z0-9_-]`, keep them short) — anything else makes the file appear in
    the UI but breaks its buttons. Option letters are lowercase and sequential:
    `a`…`z`, then `aa`, `ab`, … — continue after the highest letter already in
-   `options/` (start at `a` only when the tray is empty).
+   `options/` (start at `a` only when the tray is empty). HTTP-mode agents skip
+   the letter math entirely: POST labels only and the server assigns letters.
 6. **The user's UI updates automatically.** After writing files, simply tell the
    user the changes are ready to review — no polling, no prodding, no refresh
    instructions.
@@ -45,18 +48,28 @@ Useful HTTP endpoints (mirror the same files, for when REST is more convenient):
    `versions/` folder via the commit endpoint/UI button. It has **nothing to do with git**.
    Only run `git commit` / touch the repository when the user explicitly says
    "git commit" (or similar). When in doubt, ask which one they mean — never conflate them.
-8. **Stay quiet: file tools over terminal.** Do all agent work — reading `.focus.json`,
-   reading/writing `current.svg`, and submitting options — with file tools
-   (`read_file` / create / edit), never terminal commands (`curl`, `cat`, `echo >`).
-   Terminal calls spam the user's session and were explicitly rejected. Submitting an
-   options round quietly = creating the files directly in
-   `public/svgs/<project>/options/` using the naming convention above; the server's
-   file poller detects them within ~800ms and the tray updates live.
+8. **Stay quiet: file tools or the HTTP API — never terminal.** Do all agent work —
+   reading `.focus.json`, reading/writing `current.svg`, and submitting options —
+   through whichever quiet channel your host affords: file tools
+   (`read_file` / create / edit) or the HTTP endpoints listed above. Never terminal
+   commands (`curl`, `cat`, `echo >`): they spam the user's session and were
+   explicitly rejected. File-tool agents submit an options round by creating files
+   directly in `public/svgs/<project>/options/` using the naming convention above;
+   HTTP agents POST to `/api/projects/:name/options` instead — send labels only,
+   the **server assigns the sequential option letters** (max 6 per round), so don't
+   compute letters yourself over HTTP. Either way the tray updates live (~800ms).
+   Agents with no filesystem access can fetch these very rules via
+   `GET /api/conventions`.
    **Rounds append by default: leave earlier options in the tray and continue
    the letter sequence past the highest existing one.** Only clear previous
    experiments when the user asks — and when clearing, delete `state.json` (the
    committed-✓ tracker) along with the option files, so a later option reusing a
    letter can't show up falsely marked as already committed.
+   **Staying informed (HTTP agents):** turn-based agents re-read state at the start
+   of each turn (`GET /api/focus`, `…/current`, `…/options`). Persistent agents may
+   subscribe to `GET /api/events` (SSE): events are change-*hints*, not payloads —
+   on receipt, re-`GET` the relevant state; ignore your own echoes, and fully
+   resync whenever the stream (re)connects.
 
 ## Targeting protocol — "quiet focus" *(agreed with user)*
 

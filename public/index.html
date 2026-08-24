@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- AI agents: this page is the human-facing UI of SVG Studio, a local server
+     where a human and an AI agent iteratively design SVGs. You participate
+     through the API, not this page: GET /api is a route index and
+     GET /api/conventions returns the workflow rules you must follow. -->
+<meta name="api-index" content="/api">
+<meta name="agent-conventions" content="/api/conventions">
 <title>SVG Studio</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,6 +40,8 @@
   .sidebar li.project { justify-content: flex-start; }
   .sidebar li.project .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
   .sidebar h2 button.small { padding-left: .35rem; padding-right: .35rem; }
+  .h2-actions { display: inline-flex; gap: .35rem; align-items: center; }
+  .batch-bar { display: none; align-items: center; gap: .35rem; }
   .sidebar li.project .row-right button { padding: .08rem .18rem; font-size: .66rem; line-height: 1.2; }
   #versionList li { justify-content: flex-start; }
   #versionList li .row-right { margin-left: auto; display: flex; align-items: center; gap: .35rem; }
@@ -45,18 +53,21 @@
   .empty { color: #aaa; font-size: .82rem; cursor: default !important; }
   .empty:hover { background: transparent !important; }
   .viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
-  .banner { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; background: #fff3cd; color: #664d03; padding: .5rem 1rem; font-size: .85rem; display: flex; gap: .75rem; align-items: center; border-top: 1px solid #ffe69c; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
-  .banner.hidden { display: none; }
-  .banner span { flex: 1; }
+  #currentSvgName { display: inline-flex; flex-direction: column; align-items: flex-start; gap: .25rem; font-size: 1rem; font-weight: 600; color: #444; background: rgba(255,255,255,.88); border: 1px solid #e5e5e5; border-radius: 4px; padding: .18rem .55rem; max-width: 100%; overflow: hidden; align-self: flex-start; }
+  #currentSvgName .name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cnp-top { display: inline-flex; align-items: center; gap: .45rem; max-width: 100%; }
+  .ro-badge { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #664d03; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 3px; padding: .06rem .35rem; white-space: nowrap; }
+  .ro-badge.current { color: #0f5132; background: #d1e7dd; border-color: #a3cfbb; }
+  .cnp-actions { display: inline-flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+  #currentSvgName button { font-size: .72rem; font-weight: 500; padding: 0 .45rem; height: 1.5rem; display: inline-flex; align-items: center; white-space: nowrap; }
   .viewer-header { padding: .65rem 1rem; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; background: #fff; }
-  #currentSvgName { position: absolute; top: .6rem; left: .75rem; z-index: 4; font-size: 1rem; font-weight: 600; color: #444; background: rgba(255,255,255,.88); border: 1px solid #e5e5e5; border-radius: 4px; padding: .18rem .55rem; max-width: calc(100% - 1.5rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .commit-row { display: flex; gap: .5rem; align-items: center; }
   .commit-row button { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding-left: .55rem; padding-right: .55rem; }
-  .commit-row #forkBtn { margin-left: 2.25rem; }
   .commit-row input { padding: .4rem .6rem; border: 1px solid #ccc; border-radius: 4px; width: 210px; }
   .canvas-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
   .viewer-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
-  .viewer-content svg { max-width: 100%; max-height: 100%; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
+  .svg-frame { display: flex; flex-direction: column; gap: .45rem; max-width: 100%; }
+  .svg-frame svg { max-width: 100%; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
   .placeholder { color: #999; text-align: center; max-width: 420px; line-height: 1.6; }
   .info { padding: .55rem 1rem; border-top: 1px solid #eee; font-size: .78rem; color: #666; background: #fff; min-height: 2.1rem; }
   #codeEditor { flex: 1; display: flex; flex-direction: column; background: #fff; min-height: 0; }
@@ -79,9 +90,9 @@
   <aside class="sidebar">
     <h2>Projects <button class="small" id="newProjectBtn">+ New</button> <button class="small secondary" id="loadSvgBtn" title="Import a local .svg file as a new project">⬆ Load SVG</button> <button class="small secondary" id="loadProjectBtn" title="Import a saved project folder (current.svg + versions/)">⬆ Load project</button></h2>
     <ul id="projectList"></ul>
-    <h2>Options <button class="small secondary" id="dismissAllBtn">Dismiss all</button></h2>
+    <h2>Options <span class="h2-actions"><button class="small secondary" id="dismissAllBtn">Dismiss all</button></span></h2>
     <ul id="optionList"></ul>
-    <h2>History <button class="small danger" id="deleteVersionsBtn" style="display:none"></button></h2>
+    <h2>History <span class="h2-actions"><span class="batch-bar" id="batchBar"></span></span></h2>
     <ul id="versionList"></ul>
   </aside>
   <section class="viewer">
@@ -89,17 +100,15 @@
       <div class="commit-row">
         <input id="commitLabel" placeholder="version label (e.g. thicker strokes)">
         <button id="commitBtn" disabled>Commit</button>
-        <button id="forkBtn" class="secondary" disabled>Fork</button>
-        <button id="targetBtn" class="secondary" disabled title="Tell the AI agent to edit this project">🎯 Target</button>
-        <button id="saveSvgBtn" class="secondary" disabled title="Download this SVG to your computer">⬇ Save</button>
-        <button id="saveAllBtn" class="secondary" disabled title="Save current.svg plus every committed version into a folder of plain .svg files">⬇ Save all</button>
         <button id="codeBtn" class="secondary" disabled title="View and edit the raw SVG source">&lt;/&gt; Code</button>
         <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete project</button>
+        <button id="targetBtn" class="secondary" disabled title="Tell the AI agent to edit this project">🎯 Target current.svg</button>
+        <button id="saveAllBtn" class="secondary" disabled title="Save current.svg plus every committed version into a folder of plain .svg files">⬇ Save all</button>
       </div>
     </div>
     <div class="canvas-wrap" id="canvasWrap">
-      <span id="currentSvgName">No project selected</span>
       <div class="viewer-content" id="viewerContent">
+      <span id="currentSvgName">No project selected</span>
       <div class="placeholder">Select or create a project to begin.<br><br>
         Your AI agent writes to <code>public/svgs/&lt;project&gt;/current.svg</code> — changes appear here in real time.<br><br>
         New projects start empty: open <b>&lt;/&gt; Code</b> and paste SVG source, or use <b>⬆ Load SVG</b> to import a file.<br><br>
@@ -115,11 +124,6 @@
       <textarea id="codeArea" spellcheck="false"></textarea>
     </div>
     <div class="info" id="svgInfo"></div>
-    <div class="banner hidden" id="viewBanner">
-      <span id="viewBannerText"></span>
-      <button class="small secondary" id="forkFromVersionBtn">Fork from here</button>
-      <button class="small secondary" id="backToCurrentBtn">Back to current</button>
-    </div>
   </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -129,9 +133,8 @@ const $ = (id) => document.getElementById(id);
 const projectList = $('projectList'), versionList = $('versionList'),
       optionList = $('optionList'),
       viewerContent = $('viewerContent'), currentSvgName = $('currentSvgName'),
-      svgInfo = $('svgInfo'), commitBtn = $('commitBtn'), forkBtn = $('forkBtn'),
-      commitLabel = $('commitLabel'), viewBanner = $('viewBanner'),
-      viewBannerText = $('viewBannerText');
+      svgInfo = $('svgInfo'), commitBtn = $('commitBtn'),
+      commitLabel = $('commitLabel');
 
 const state = { project: null, viewingVersion: null, target: null, codeMode: false };
 
@@ -147,6 +150,14 @@ async function api(path, opts) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
   return res;
 }
+
+// One shared selection group spanning both lists, with a single Delete action
+// that covers whatever is checked across them. Created here, near the top of
+// the script, because the batch action below registers during initial
+// execution — before any list is rendered.
+const selection = createBatchSelector([versionList, optionList]);
+const batchBar = createBatchBar($('batchBar'));
+selection.onChange(() => batchBar.refresh(selection.ids().length));
 
 /* ---------- projects ---------- */
 
@@ -222,18 +233,15 @@ function renderEmpty() {
   state.project = null;
   state.viewingVersion = null;
   setCodeMode(false);
-  currentSvgName.textContent = 'No project selected';
+  setNameArea('No project selected');
   commitBtn.disabled = true;
-  forkBtn.disabled = true;
-  $('targetBtn').disabled = true;
   $('deleteBtn').disabled = true;
-  $('saveSvgBtn').disabled = true;
+  $('targetBtn').disabled = true;
   $('saveAllBtn').disabled = true;
   $('codeBtn').disabled = true;
   versionList.innerHTML = '';
   optionList.innerHTML = '';
   svgInfo.textContent = '';
-  viewBanner.classList.add('hidden');
 }
 
 async function selectProject(name) {
@@ -241,13 +249,10 @@ async function selectProject(name) {
   state.viewingVersion = null;
   setCodeMode(false);
   commitBtn.disabled = false;
-  forkBtn.disabled = false;
-  $('targetBtn').disabled = false;
   $('deleteBtn').disabled = false;
-  $('saveSvgBtn').disabled = false;
+  $('targetBtn').disabled = false;
   $('saveAllBtn').disabled = false;
   $('codeBtn').disabled = false;
-  viewBanner.classList.add('hidden');
   [...projectList.children].forEach((li) =>
     li.classList.toggle('active', li.querySelector('.name')?.textContent.replace(' ·', '') === name)
   );
@@ -267,9 +272,63 @@ async function loadCurrent() {
   }
 }
 
+// Fills the filename pill in the viewport: the name with a read-only status
+// chip beside it while a snapshot is open, and a row of per-view actions
+// Fork / Save — both acting on whatever the pill names.
+function setNameArea(title, viewingVersion = null) {
+  currentSvgName.innerHTML = '';
+  const top = document.createElement('span');
+  top.className = 'cnp-top';
+  const t = document.createElement('span');
+  t.className = 'name-text';
+  t.textContent = title;
+  top.append(t);
+  if (!state.project) {
+    currentSvgName.append(top);
+    return;
+  }
+  const badge = document.createElement('span');
+  if (viewingVersion) {
+    badge.className = 'ro-badge';
+    badge.textContent = 'read-only';
+    badge.title = `Viewing ${viewingVersion}`;
+  } else {
+    badge.className = 'ro-badge current';
+    badge.textContent = 'current';
+    badge.title = 'Viewing current.svg';
+  }
+  top.append(badge);
+  currentSvgName.append(top);
+  const row = document.createElement('span');
+  row.className = 'cnp-actions';
+  row.append(
+    pillBtn('Fork', viewingVersion ? 'Fork this snapshot into a new project' : 'Fork current.svg into a new project', () => doFork(viewingVersion)),
+    pillBtn('⬇ Save', viewingVersion ? 'Download this snapshot' : 'Download current.svg', saveCurrentOrVersion),
+    // Restore only makes sense for a snapshot, so it appears just while read-only
+    ...(viewingVersion ? [pillBtn('Restore', 'Copy this version back into current.svg (not committed automatically)', () => restoreVersion(viewingVersion))] : [])
+  );
+  currentSvgName.append(row);
+}
+
+function pillBtn(label, title, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = label;
+  b.title = title;
+  b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+  return b;
+}
+
 function renderSvg(svgText, title) {
-  viewerContent.innerHTML = svgText;
-  currentSvgName.textContent = title;
+  // The pill is re-parented into the frame on every render so it stays tied
+  // to the svg's own box: centered with it, directly beneath it.
+  const frame = document.createElement('div');
+  frame.className = 'svg-frame';
+  frame.innerHTML = svgText;
+  frame.appendChild(currentSvgName);
+  viewerContent.innerHTML = '';
+  viewerContent.appendChild(frame);
+  setNameArea(title, state.viewingVersion);
   const svg = viewerContent.querySelector('svg');
   if (svg) {
     const w = svg.getAttribute('width') || 'auto';
@@ -293,11 +352,13 @@ async function loadOptions() {
       li.className = 'empty';
       li.textContent = 'No pending options';
       optionList.appendChild(li);
+      batchBar.refresh(selection.ids().length);
       return;
     }
     for (const o of options) {
       const li = document.createElement('li');
       if (o.committed) li.title = 'Already committed to history';
+      const checkbox = selection.makeCheckbox(o.id);
       const label = document.createElement('span');
       label.className = 'name';
       label.textContent = (o.committed ? '✓ ' : '') + o.id.replace(/\.svg$/, '').replace(/^option-/, '');
@@ -355,10 +416,11 @@ async function loadOptions() {
       const right = document.createElement('span');
       right.className = 'row-right';
       right.append(promote, commitOpt, dismiss);
-      li.append(label, right);
+      li.append(checkbox, label, right);
       li.addEventListener('click', () => previewOption(o.id));
       optionList.appendChild(li);
     }
+    batchBar.refresh(selection.ids().length);
   } catch {
     optionList.innerHTML = '<li class="empty">Options unavailable</li>';
   }
@@ -368,8 +430,7 @@ async function previewOption(id) {
   try {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/options/${encodeURIComponent(id)}`);
     state.viewingVersion = null;
-    viewBanner.classList.add('hidden');
-    renderSvg(await res.text(), `${state.project}/options/${id}`);
+    renderSvg(await res.text(), `${state.project}/${id}`);
   } catch (err) {
     toast(err.message);
   }
@@ -378,47 +439,129 @@ async function previewOption(id) {
 $('dismissAllBtn').addEventListener('click', async () => {
   if (!state.project) return;
   try {
+    const options = await (await api(`/api/projects/${encodeURIComponent(state.project)}/options`)).json();
+    if (!options.length) { toast('No options to dismiss'); return; }
+    const msg = `Dismiss all ${options.length} option${options.length > 1 ? 's' : ''}?\n\n${options.map((o) => '• ' + o.id.replace(/\.svg$/, '').replace(/^option-/, '')).join('\n')}`;
+    if (!confirm(msg)) return;
     await api(`/api/projects/${encodeURIComponent(state.project)}/options`, { method: 'DELETE' });
     toast('All options dismissed');
     loadOptions();
   } catch (err) { toast(err.message); }
 });
 
-/* ---------- history ---------- */
+/* ---------- batch selection (generic, shared by lists) ---------- */
 
-function checkedVersionIds() {
-  return [...versionList.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.dataset.id);
+// Tracks which rows are checked, optionally across several lists at once (pass
+// an array) so their checkboxes form a single selection group. Deliberately
+// agnostic of what a selection is *for* — actions live on a BatchBar instead,
+// so new kinds of batch operation can be added without touching
+// list-rendering code.
+function createBatchSelector(listEl) {
+  const els = Array.isArray(listEl) ? listEl : [listEl];
+  const listeners = new Set();
+  const emit = () => listeners.forEach((fn) => fn());
+  const checkedIn = (el) => [...el.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.dataset.id);
+  return {
+    makeCheckbox(id, title = 'Select') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.id = id;
+      cb.title = title;
+      cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('change', emit);
+      return cb;
+    },
+    ids() {
+      return els.flatMap(checkedIn);
+    },
+    idsIn(el) {
+      return checkedIn(el);
+    },
+    onChange(fn) { listeners.add(fn); }
+  };
 }
 
-function updateDeleteVersionsBtn() {
-  const btn = $('deleteVersionsBtn');
-  const ids = checkedVersionIds();
-  btn.style.display = ids.length ? 'inline-block' : 'none';
-  btn.textContent = `Delete selected (${ids.length})`;
-}
-
-$('deleteVersionsBtn').addEventListener('click', async () => {
-  const ids = checkedVersionIds();
-  if (!ids.length || !state.project) return;
-  const msg = `Delete ${ids.length} committed version${ids.length > 1 ? 's' : ''}?\n\n${ids.map((i) => '• ' + i.replace(/\.svg$/, '')).join('\n')}\n\nThis cannot be undone.`;
-  if (!confirm(msg)) return;
-  try {
-    await api(`/api/projects/${encodeURIComponent(state.project)}/versions/delete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, confirm: true })
-    });
-    toast(`Deleted ${ids.length} version${ids.length > 1 ? 's' : ''}`);
-    if (state.viewingVersion && ids.includes(state.viewingVersion)) {
-      state.viewingVersion = null;
-      viewBanner.classList.add('hidden');
-      loadCurrent();
+// Renders one button per registered action inside a container; each action
+// decides for which selection sizes it applies. Bars refresh whenever their
+// list's selector changes.
+function createBatchBar(containerEl) {
+  const buttons = [];
+  function refresh(count) {
+    let anyVisible = false;
+    for (const b of buttons) {
+      const show = b.when(count);
+      if (show && b.label) b.el.textContent = b.label(count);
+      b.el.style.display = show ? '' : 'none';
+      anyVisible = anyVisible || show;
     }
-    loadVersions();
-  } catch (err) {
-    toast(err.message);
+    containerEl.style.display = anyVisible ? 'inline-flex' : 'none';
+  }
+  return {
+    register({ label, title, className = 'danger', when = (n) => n > 0, run }) {
+      const el = document.createElement('button');
+      el.className = `small ${className}`;
+      if (title) el.title = title;
+      el.style.display = 'none';
+      el.addEventListener('click', () => run());
+      containerEl.appendChild(el);
+      buttons.push({ el, label, when });
+      return el;
+    },
+    refresh
+  };
+}
+
+/* ---------- shared batch action (whole selection group) ---------- */
+
+batchBar.register({
+  label: (n) => `Delete selected (${n})`,
+  title: 'Delete the selected committed versions and dismiss the selected options',
+  className: 'danger',
+  run: async () => {
+    if (!state.project) return;
+    const versionIds = selection.idsIn(versionList);
+    const optionIds = selection.idsIn(optionList);
+    const total = versionIds.length + optionIds.length;
+    if (!total) return;
+    const lines = [];
+    if (versionIds.length) lines.push('Versions (deleted permanently):', ...versionIds.map((i) => '• ' + i.replace(/\.svg$/, '')));
+    if (optionIds.length) lines.push('Options (dismissed):', ...optionIds.map((i) => '• ' + i.replace(/\.svg$/, '').replace(/^option-/, '')));
+    if (!confirm(`Delete ${total} item${total > 1 ? 's' : ''}?\n\n${lines.join('\n')}\n\nThis cannot be undone.`)) return;
+    try {
+      if (versionIds.length) {
+        await api(`/api/projects/${encodeURIComponent(state.project)}/versions/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: versionIds, confirm: true })
+        });
+      }
+      if (optionIds.length) {
+        await api(`/api/projects/${encodeURIComponent(state.project)}/options/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: optionIds, confirm: true })
+        });
+      }
+      const bits = [];
+      if (versionIds.length) bits.push(`deleted ${versionIds.length} version${versionIds.length > 1 ? 's' : ''}`);
+      if (optionIds.length) bits.push(`dismissed ${optionIds.length} option${optionIds.length > 1 ? 's' : ''}`);
+      toast(bits.join(', ').replace(/^./, (c) => c.toUpperCase()));
+      if (state.viewingVersion && versionIds.includes(state.viewingVersion)) {
+        state.viewingVersion = null;
+        commitBtn.disabled = false;
+        codeBtn.disabled = false;
+        deleteBtn.disabled = false;
+        loadCurrent();
+      }
+      loadVersions();
+      loadOptions();
+    } catch (err) {
+      toast(err.message);
+    }
   }
 });
+
+/* ---------- history ---------- */
 
 async function loadVersions() {
   if (!state.project) return;
@@ -430,18 +573,13 @@ async function loadVersions() {
       li.className = 'empty';
       li.textContent = 'Nothing committed yet';
       versionList.appendChild(li);
-      updateDeleteVersionsBtn();
+      batchBar.refresh(selection.ids().length);
       return;
     }
     for (const v of versions) {
       const li = document.createElement('li');
       if (state.viewingVersion === v.id) li.classList.add('active');
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.dataset.id = v.id;
-      checkbox.title = 'Select for deletion';
-      checkbox.addEventListener('click', (e) => e.stopPropagation());
-      checkbox.addEventListener('change', updateDeleteVersionsBtn);
+      const checkbox = selection.makeCheckbox(v.id);
       const label = document.createElement('span');
       label.className = 'name';
       label.textContent = v.id.replace(/\.svg$/, '');
@@ -474,7 +612,7 @@ async function loadVersions() {
       li.addEventListener('click', () => viewVersion(v.id));
       versionList.appendChild(li);
     }
-    updateDeleteVersionsBtn();
+    batchBar.refresh(selection.ids().length);
   } catch {
     versionList.innerHTML = '<li class="empty">No versions folder</li>';
   }
@@ -485,27 +623,24 @@ async function viewVersion(id) {
   try {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/versions/${encodeURIComponent(id)}`);
     state.viewingVersion = id;
-    renderSvg(await res.text(), `${state.project}/versions/${id}`);
-    viewBannerText.textContent = `Viewing snapshot ${id} — read-only`;
-    viewBanner.classList.remove('hidden');
+    // current.svg isn't what's on screen — don't let these act blind
+    commitBtn.disabled = true;
+    codeBtn.disabled = true;
+    deleteBtn.disabled = true;
+    renderSvg(await res.text(), `${state.project}/${id}`);
     loadVersions();
   } catch (err) {
     toast(err.message);
   }
 }
 
-$('backToCurrentBtn').addEventListener('click', () => {
-  state.viewingVersion = null;
-  viewBanner.classList.add('hidden');
-  loadCurrent();
-  loadVersions();
-});
-
 async function restoreVersion(id) {
   try {
     await api(`/api/projects/${encodeURIComponent(state.project)}/rollback/${encodeURIComponent(id)}`, { method: 'POST' });
     state.viewingVersion = null;
-    viewBanner.classList.add('hidden');
+    commitBtn.disabled = false;
+    codeBtn.disabled = false;
+    deleteBtn.disabled = false;
     toast(`Restored ${id} to current — not committed yet`);
     loadCurrent();
     loadVersions();
@@ -552,7 +687,7 @@ async function renameVersion(id, label) {
   } catch (err) { toast(err.message); }
 }
 
-$('saveSvgBtn').addEventListener('click', async () => {
+async function saveCurrentOrVersion() {
   if (!state.project) return;
   if (state.viewingVersion) return downloadVersion(state.viewingVersion);
   const p = encodeURIComponent(state.project);
@@ -560,7 +695,7 @@ $('saveSvgBtn').addEventListener('click', async () => {
     await downloadSvgFile(`/api/projects/${p}/current`, `${state.project}.svg`);
     toast(`Saved ${state.project}.svg`);
   } catch (err) { toast(err.message); }
-});
+}
 
 $('saveAllBtn').addEventListener('click', async () => {
   if (!state.project) return;
@@ -676,7 +811,7 @@ commitLabel.addEventListener('keydown', (e) => {
 });
 
 commitBtn.addEventListener('click', async () => {
-  if (!state.project) return;
+  if (!state.project || state.viewingVersion) return;
   try {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/commit`, {
       method: 'POST',
@@ -711,8 +846,8 @@ async function doFork(version) {
   }
 }
 
-forkBtn.addEventListener('click', () => doFork(null));
-$('forkFromVersionBtn').addEventListener('click', () => doFork(state.viewingVersion));
+// Forks whatever is in the viewport: the viewed snapshot if one is open,
+// otherwise current.svg. (Wired from the filename pill — see setNameArea.)
 
 // Explicitly tell agents which project to edit
 // Delete the whole project, with confirmation
@@ -737,7 +872,9 @@ $('deleteBtn').addEventListener('click', async () => {
 });
 
 // Explicitly tell agents which project to edit
-$('targetBtn').addEventListener('click', async () => {
+$('targetBtn').addEventListener('click', () => targetProject());
+
+async function targetProject() {
   if (!state.project) return;
   try {
     await api('/api/focus', {
@@ -751,7 +888,7 @@ $('targetBtn').addEventListener('click', async () => {
   } catch (err) {
     toast(err.message);
   }
-});
+}
 
 $('newProjectBtn').addEventListener('click', async () => {
   const name = prompt('Project name (letters, numbers, "-" and "_"):');
