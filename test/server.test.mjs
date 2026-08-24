@@ -163,6 +163,140 @@ test('project delete requires confirm flag', async () => {
   assert.equal(r.status, 400);
 });
 
+/* ---------------- options POST (HTTP-agent path) ---------------- */
+
+test('POST options assigns sequential letters on an empty tray', async () => {
+  await req('DELETE', `/api/projects/${NAME}/options`, {}); // start from empty
+  const r = await req('POST', `/api/projects/${NAME}/options`, {
+    options: [
+      { label: 'warm-palette', svg: optionSvg },
+      { label: 'cool-palette', svg: svg2 }
+    ]
+  });
+  assert.equal(r.status, 201);
+  const body = await r.json();
+  assert.deepEqual(body.created, ['option-a-warm-palette.svg', 'option-b-cool-palette.svg']);
+  const opts = await (await req('GET', `/api/projects/${NAME}/options`)).json();
+  assert.ok(
+    opts.some((o) => o.id === 'option-a-warm-palette.svg' && o.committed === false),
+    JSON.stringify(opts)
+  );
+});
+
+test('POST options continues past highest letter (a,b,z → aa)', async () => {
+  const dir = path.join(ROOT, 'public', 'svgs', NAME, 'options');
+  await fsp.mkdir(dir, { recursive: true });
+  for (const id of ['option-a-one.svg', 'option-b-two.svg', 'option-z-three.svg']) {
+    await fsp.writeFile(path.join(dir, id), optionSvg);
+  }
+  const r = await req('POST', `/api/projects/${NAME}/options`, { label: 'fourth', svg: optionSvg });
+  assert.equal(r.status, 201);
+  assert.deepEqual((await r.json()).created, ['option-aa-fourth.svg']);
+});
+
+test('duplicate labels in one round get distinct letters', async () => {
+  const r = await req('POST', `/api/projects/${NAME}/options`, {
+    options: [
+      { label: 'same', svg: optionSvg },
+      { label: 'same', svg: svg2 }
+    ]
+  });
+  assert.equal(r.status, 201);
+  const created = (await r.json()).created;
+  assert.equal(created.length, 2);
+  assert.notEqual(created[0], created[1]);
+  assert.match(created[0], /^option-[a-z]{1,2}-same\.svg$/);
+});
+
+test('POST options rejects bad input without writing anything', async () => {
+  const before = (await (await req('GET', `/api/projects/${NAME}/options`)).json()).length;
+  assert.equal((await req('POST', '/api/projects/bad%2Fname/options', { label: 'x', svg: optionSvg })).status, 400);
+  assert.equal((await req('POST', `/api/projects/${NAME}/options`, { label: 'x', svg: 'not svg' })).status, 400);
+  assert.equal((await req('POST', `/api/projects/${NAME}/options`, { label: '///', svg: optionSvg })).status, 400);
+  assert.equal((await req('POST', `/api/projects/${NAME}/options`, {})).status, 400);
+  const after = (await (await req('GET', `/api/projects/${NAME}/options`)).json()).length;
+  assert.equal(after, before, 'no files should be written for rejected rounds');
+});
+
+test('POST options caps rounds at 6; exactly 6 succeeds', async () => {
+  const seven = Array.from({ length: 7 }, (_, i) => ({ label: `round${i}`, svg: optionSvg }));
+  assert.equal((await req('POST', `/api/projects/${NAME}/options`, { options: seven })).status, 400);
+  const r = await req('POST', `/api/projects/${NAME}/options`, { options: seven.slice(0, 6) });
+  assert.equal(r.status, 201);
+  assert.equal((await r.json()).created.length, 6);
+});
+
+test('POST round leaves the ✓-tracker (state.json) untouched', async () => {
+  await req('DELETE', `/api/projects/${NAME}/options`, {}); // removes dir incl. state.json
+  const r = await req('POST', `/api/projects/${NAME}/options`, { label: 'tracker-check', svg: optionSvg });
+  assert.equal(r.status, 201);
+  await assert.rejects(
+    fsp.access(path.join(ROOT, 'public', 'svgs', NAME, 'options', 'state.json')),
+    { code: 'ENOENT' }
+  );
+});
+
+test('posted options are fetchable individually', async () => {
+  await req('DELETE', `/api/projects/${NAME}/options`, {});
+  const r = await req('POST', `/api/projects/${NAME}/options`, { label: 'fetch-me', svg: svg1 });
+  const [id] = (await r.json()).created;
+  assert.equal(id, 'option-a-fetch-me.svg');
+  const back = await (await req('GET', `/api/projects/${NAME}/options/${id}`)).text();
+  assert.ok(back.includes('steelblue'));
+});
+
+/* ---------------- API discovery ---------------- */
+
+test('GET /api lists the surface and points at conventions', async () => {
+  const r = await req('GET', '/api');
+  assert.equal(r.status, 200);
+  const idx = await r.json();
+  assert.equal(idx.name, 'SVG Studio');
+  assert.equal(idx.startHere.conventions, '/api/conventions');
+  assert.ok(Array.isArray(idx.endpoints) && idx.endpoints.length > 10, 'endpoint list missing');
+  assert.ok(
+    idx.endpoints.some((e) => e.method.includes('POST') && e.path === '/api/projects/:name/options'),
+    'options POST should be listed'
+  );
+});
+
+test('API responses carry a Link header advertising conventions', async () => {
+  const r = await req('GET', '/api/projects');
+  assert.equal(r.headers.get('link'), '</api/conventions>; rel="help"');
+});
+
+test('unknown /api paths get a JSON signpost + Link header', async () => {
+  const r = await req('GET', '/api/nope');
+  assert.equal(r.status, 404);
+  assert.equal(r.headers.get('link'), '</api/conventions>; rel="help"');
+  const body = await r.json();
+  assert.equal(body.see, '/api');
+  assert.equal(body.conventions, '/api/conventions');
+});
+
+/* ---------------- conventions mirror ---------------- */
+
+test('GET /api/conventions mirrors AGENTS.md as markdown', async () => {
+  const r = await req('GET', '/api/conventions');
+  assert.equal(r.status, 200);
+  assert.ok((r.headers.get('content-type') || '').includes('text/markdown'));
+  const text = await r.text();
+  const disk = await fsp.readFile(path.join(ROOT, 'AGENTS.md'), 'utf8');
+  assert.equal(text, disk);
+});
+
+test('conventions reflect AGENTS.md edits without a restart', async () => {
+  const file = path.join(ROOT, 'AGENTS.md');
+  const original = await fsp.readFile(file, 'utf8');
+  try {
+    await fsp.writeFile(file, original + '\n<!-- selftest-live-edit-marker -->\n');
+    const text = await (await req('GET', '/api/conventions')).text();
+    assert.ok(text.includes('selftest-live-edit-marker'), 'edit should be visible on next request');
+  } finally {
+    await fsp.writeFile(file, original); // restore no matter what
+  }
+});
+
 /* ---------------- focus round-trip ---------------- */
 
 test('focus set + restore leaves .focus.json untouched', async () => {

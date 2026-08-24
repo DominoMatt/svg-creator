@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- AI agents: this page is the human-facing UI of SVG Studio, a local server
+     where a human and an AI agent iteratively design SVGs. You participate
+     through the API, not this page: GET /api is a route index and
+     GET /api/conventions returns the workflow rules you must follow. -->
+<meta name="api-index" content="/api">
+<meta name="agent-conventions" content="/api/conventions">
 <title>SVG Studio</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }

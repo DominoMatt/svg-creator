@@ -13,6 +13,14 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.text({ type: ['image/svg+xml', 'text/plain'], limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Every /api response passively advertises where the agent workflow rules
+// live (RFC 8288 Link header). Cheap discovery for harnesses that inspect
+// headers; body-level discovery is covered by GET /api below.
+app.use('/api', (_req, res, next) => {
+  res.set('Link', '</api/conventions>; rel="help"');
+  next();
+});
+
 /* ---------------- helpers ---------------- */
 
 const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -258,6 +266,56 @@ app.delete('/api/projects/:project', async (req, res) => {
   }
 });
 
+/* ---------------- API discovery ----------------
+   Front door for HTTP-mode agents that know only the origin: one GET reveals
+   the whole surface and points at the workflow rules. Hand-maintained to stay
+   terse — keep in sync with the routes below and the README table. */
+app.get('/api', (_req, res) => {
+  res.json({
+    name: 'SVG Studio',
+    startHere: { conventions: '/api/conventions' },
+    events: '/api/events',
+    endpoints: [
+      ['GET', '/api/projects', 'list projects'],
+      ['POST', '/api/projects', 'create project {name}'],
+      ['DELETE', '/api/projects/:name', 'delete project {confirm:true}'],
+      ['POST', '/api/projects/:name/rename', 'rename project {name}'],
+      ['GET|PUT', '/api/projects/:name/current', 'working copy (raw SVG or {svg})'],
+      ['GET|POST', '/api/projects/:name/options', 'list tray | submit round {options:[{label,svg}]}, max 6'],
+      ['GET|DELETE', '/api/projects/:name/options/:id', 'fetch | dismiss one option'],
+      ['DELETE', '/api/projects/:name/options', 'dismiss all options'],
+      ['POST', '/api/projects/:name/options/delete', 'bulk-dismiss {ids, confirm:true}'],
+      ['POST', '/api/projects/:name/select', 'promote option to current {option:id}'],
+      ['POST', '/api/projects/:name/commit', 'commit current or an option {label?, option?}'],
+      ['GET', '/api/projects/:name/versions', 'list versions'],
+      ['GET|PUT', '/api/projects/:name/versions/:id', 'fetch | direct-write version'],
+      ['POST', '/api/projects/:name/versions/:id/rename', '{label}; keeps vNNN number'],
+      ['POST', '/api/projects/:name/versions/delete', 'bulk-delete {ids, confirm:true}'],
+      ['POST', '/api/projects/:name/rollback/:id', 'restore version as current (no auto-commit)'],
+      ['POST', '/api/projects/:name/fork', 'fork to new project {name, version?}'],
+      ['GET|PUT', '/api/focus', 'agent 🎯 target {project}'],
+      ['GET', '/api/conventions', 'workflow rules (AGENTS.md mirror) — read first'],
+      ['GET', '/api/events', 'SSE change stream']
+    ].map(([method, path, purpose]) => ({ method, path, purpose }))
+  });
+});
+
+/* ---------------- agent conventions (AGENTS.md mirror) ----------------
+   HTTP-mode agents have no filesystem to read AGENTS.md from, so this
+   read-only endpoint is their only channel for the workflow rules. Read
+   per-request (never cached) so rule edits apply immediately; AGENTS.md
+   itself stays editable via file tools/git — GET only, never PUT. */
+app.get('/api/conventions', async (_req, res) => {
+  try {
+    const data = await fsp.readFile(path.join(__dirname, 'AGENTS.md'), 'utf8');
+    res.set('Content-Type', 'text/markdown; charset=utf-8');
+    res.send(data);
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Conventions file not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /* ---------------- current working copy ---------------- */
 
 app.get('/api/projects/:project/current', async (req, res) => {
@@ -392,6 +450,41 @@ app.get('/api/projects/:project/versions/:id', async (req, res) => {
 const OPTION_ID_RE = /^option-[a-z]{1,2}-[a-zA-Z0-9_-]+\.svg$/;
 const OPTIONS_STATE_FILE = 'state.json'; // inside options/; tracks which options were committed
 
+/* Option letters are bijective base-26: a…z, then aa, ab, … The server assigns
+   them (clients send labels only) so concurrent submitters can't collide and
+   HTTP agents don't need letter math. Pure core kept testable. */
+function lettersToIndex(letters) {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 96);
+  return n;
+}
+
+function indexToLetters(n) {
+  let s = '';
+  while (n > 0) {
+    s = String.fromCharCode(97 + ((n - 1) % 26)) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function nextLettersFrom(existingIds, count) {
+  let max = 0;
+  for (const id of existingIds) {
+    const m = /^option-([a-z]{1,2})-/.exec(String(id));
+    if (m) max = Math.max(max, lettersToIndex(m[1]));
+  }
+  return Array.from({ length: count }, (_, i) => indexToLetters(max + i + 1));
+}
+
+async function nextOptionLetters(optionsDir, count) {
+  let files = [];
+  try {
+    files = await fsp.readdir(optionsDir);
+  } catch {}
+  return nextLettersFrom(files, count);
+}
+
 async function readCommittedIds(optionsDir) {
   try {
     const s = JSON.parse(await fsp.readFile(path.join(optionsDir, OPTIONS_STATE_FILE), 'utf8'));
@@ -429,8 +522,60 @@ app.get('/api/projects/:project/options', async (req, res) => {
   }
 });
 
-// (Options rounds are created by agents writing files directly into options/;
-// there is deliberately no POST endpoint — see AGENTS.md rule 8.)
+// Submit an options round over HTTP (the file-tools path still works too —
+// see AGENTS.md rule 8). Clients send labels only; the server assigns the
+// sequential option letters so concurrent submitters can't collide.
+const MAX_OPTIONS_PER_ROUND = 6;
+
+app.post('/api/projects/:project/options', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const body = req.body || {};
+  // Round shape {"options":[{label,svg},…]} or singular shorthand {label,svg}
+  const items = Array.isArray(body.options) ? body.options : body.svg != null ? [body] : null;
+  if (!items || !items.length) {
+    return res.status(400).json({ error: 'Body must be {"options": [{"label", "svg"}]} or {"label", "svg"}' });
+  }
+  if (items.length > MAX_OPTIONS_PER_ROUND) {
+    return res.status(400).json({
+      error: `Round too large: max ${MAX_OPTIONS_PER_ROUND} options per POST — split into multiple rounds`
+    });
+  }
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] || {};
+    if (!it.svg || !String(it.svg).includes('<svg')) {
+      return res.status(400).json({ error: `options[${i}]: body must contain SVG markup` });
+    }
+    if (!sanitizeLabel(it.label, '')) {
+      return res.status(400).json({ error: `options[${i}]: label required (letters, numbers, "-" and "_")` });
+    }
+  }
+  try {
+    const optionsDir = path.join(dir, 'options');
+    await fsp.mkdir(optionsDir, { recursive: true });
+    const letters = await nextOptionLetters(optionsDir, items.length);
+    const created = [];
+    const failed = [];
+    // Write the whole round before broadcasting so the tray pops in complete.
+    for (let i = 0; i < items.length; i++) {
+      const id = `option-${letters[i]}-${sanitizeLabel(items[i].label)}.svg`;
+      if (!OPTION_ID_RE.test(id)) {
+        failed.push(id || `option-${letters[i]}-<invalid>`);
+        continue;
+      }
+      try {
+        await fsp.writeFile(path.join(optionsDir, id), String(items[i].svg));
+        created.push(id);
+      } catch {
+        failed.push(id); // forgiving: keep what succeeded, report the rest
+      }
+    }
+    if (created.length) broadcastDebounced('options-changed', { project: req.params.project });
+    res.status(201).json({ ok: created.length > 0, created, ...(failed.length ? { failed } : {}) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Dismiss all options
 app.delete('/api/projects/:project/options', async (req, res) => {
@@ -663,6 +808,17 @@ app.post('/api/projects/:project/versions/:id/rename', async (req, res) => {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Version not found' });
     res.status(500).json({ error: err.message });
   }
+});
+
+// Unknown API paths get a JSON signpost instead of Express's default HTML
+// error, so agents that guess a wrong URL are pointed back to the index
+// (and, via the Link header middleware, at the conventions mirror).
+app.use('/api', (_req, res) => {
+  res.status(404).json({
+    error: 'Unknown API endpoint',
+    see: '/api',
+    conventions: '/api/conventions'
+  });
 });
 
 app.listen(PORT, () => {

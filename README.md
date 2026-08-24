@@ -69,13 +69,15 @@ can use them too.
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/api` | Route index — machine-readable endpoint list; points agents at `/api/conventions` |
 | `GET` | `/api/projects` | List all SVG projects |
 | `POST` | `/api/projects` | Create a new project `{ name }` |
 | `DELETE` | `/api/projects/:name` | Delete entire project — requires `{confirm: true}`; UI asks first |
 | `POST` | `/api/projects/:name/rename` | Rename project `{ name }` — folder renamed; agent 🎯 target follows |
 | `GET` | `/api/projects/:name/current` | Fetch working copy |
 | `PUT` | `/api/projects/:name/current` | Write working copy (accepts raw SVG or `{"svg": "..."}`) |
-| `GET` | `/api/projects/:name/options` | List pending options (+ committed flags) — rounds are submitted as files, not via POST (see AGENTS.md) |
+| `GET` | `/api/projects/:name/options` | List pending options (+ committed flags) |
+| `POST` | `/api/projects/:name/options` | Submit an options round `{options: [{label, svg}]}` or singular `{label, svg}` — server assigns sequential letters; max 6 per round |
 | `GET` | `/api/projects/:name/options/:id` | Fetch one option's SVG |
 | `DELETE` | `/api/projects/:name/options` | Dismiss all options |
 | `DELETE` | `/api/projects/:name/options/:id` | Dismiss one option |
@@ -90,6 +92,7 @@ can use them too.
 | `GET` | `/api/focus` | Which project the user 🎯-targeted for agents |
 | `PUT` | `/api/focus` | Set agent target `{ project }` — written by the UI Target button |
 | `GET` | `/api/events` | SSE stream — events: `projects-changed`, `current-changed`, `versions-changed`, `options-changed`, `focus-changed` |
+| `GET` | `/api/conventions` | Agent workflow rules (read-only `AGENTS.md` mirror, always current) |
 
 ## Working with an AI agent
 
