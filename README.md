@@ -10,6 +10,7 @@ nothing enters history unless *you* commit it.
 npm install
 npm start          # http://localhost:3000
 npm run dev        # same, with node --watch auto-restart on server changes
+npm test           # API self-test — spawns its own server on a free port, no setup
 ```
 
 ## How it works
