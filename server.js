@@ -221,10 +221,24 @@ app.post('/api/projects', async (req, res) => {
    read it via HTTP (GET /api/focus) or straight from the filesystem. */
 const FOCUS_FILE = path.join(SVG_DIR, '.focus.json');
 
-async function readFocus() {
+async function readFocusRaw() {
   try {
     const data = JSON.parse(await fsp.readFile(FOCUS_FILE, 'utf8'));
     return data.project || null;
+  } catch {
+    return null;
+  }
+}
+
+// A focus naming a folder that no longer exists (deleted by hand, or a typo
+// written by a file-tool agent) reads as "no target" rather than a dead name.
+async function readFocus() {
+  const name = await readFocusRaw();
+  const dir = name ? safeProjectPath(String(name)) : null;
+  if (!dir) return null;
+  try {
+    await fsp.access(dir);
+    return name;
   } catch {
     return null;
   }
@@ -260,6 +274,11 @@ app.delete('/api/projects/:project', async (req, res) => {
   }
   try {
     await fsp.rm(dir, { recursive: true, force: true });
+    // Deleting the 🎯-targeted project clears the target so no agent
+    // inherits a dangling focus.
+    if ((await readFocusRaw()) === req.params.project) {
+      await fsp.writeFile(FOCUS_FILE, JSON.stringify({ project: null }, null, 2));
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -294,20 +313,20 @@ app.get('/api', (_req, res) => {
       ['POST', '/api/projects/:name/rollback/:id', 'restore version as current (no auto-commit)'],
       ['POST', '/api/projects/:name/fork', 'fork to new project {name, version?}'],
       ['GET|PUT', '/api/focus', 'agent 🎯 target {project}'],
-      ['GET', '/api/conventions', 'workflow rules (AGENTS.md mirror) — read first'],
+      ['GET', '/api/conventions', 'workflow rules — read first'],
       ['GET', '/api/events', 'SSE change stream']
     ].map(([method, path, purpose]) => ({ method, path, purpose }))
   });
 });
 
-/* ---------------- agent conventions (AGENTS.md mirror) ----------------
-   HTTP-mode agents have no filesystem to read AGENTS.md from, so this
+/* ---------------- agent conventions (BROWSER_AGENTS.md mirror) ----------------
+   HTTP-mode agents have no filesystem to read BROWSER_AGENTS.md from, so this
    read-only endpoint is their only channel for the workflow rules. Read
-   per-request (never cached) so rule edits apply immediately; AGENTS.md
+   per-request (never cached) so rule edits apply immediately; BROWSER_AGENTS.md
    itself stays editable via file tools/git — GET only, never PUT. */
 app.get('/api/conventions', async (_req, res) => {
   try {
-    const data = await fsp.readFile(path.join(__dirname, 'AGENTS.md'), 'utf8');
+    const data = await fsp.readFile(path.join(__dirname, 'BROWSER_AGENTS.md'), 'utf8');
     res.set('Content-Type', 'text/markdown; charset=utf-8');
     res.send(data);
   } catch (err) {
@@ -511,6 +530,14 @@ app.get('/api/projects/:project/options', async (req, res) => {
       files = (await fsp.readdir(optionsDir)).filter((f) => f.endsWith('.svg')).sort();
     } catch {}
     const committed = new Set(await readCommittedIds(optionsDir));
+    // Prune ✓-marks whose file is gone (e.g. a file-tool agent cleared the
+    // tray) so a later option reusing the name can't inherit a stale ✓.
+    const live = [...committed].filter((id) => files.includes(id));
+    if (live.length !== committed.size) {
+      await writeCommittedIds(optionsDir, live);
+      committed.clear();
+      for (const id of live) committed.add(id);
+    }
     const options = [];
     for (const f of files) {
       const st = await fsp.stat(path.join(optionsDir, f));
@@ -523,7 +550,7 @@ app.get('/api/projects/:project/options', async (req, res) => {
 });
 
 // Submit an options round over HTTP (the file-tools path still works too —
-// see AGENTS.md rule 8). Clients send labels only; the server assigns the
+// see AGENTS.md rule 3). Clients send labels only; the server assigns the
 // sequential option letters so concurrent submitters can't collide.
 const MAX_OPTIONS_PER_ROUND = 6;
 
@@ -772,13 +799,9 @@ app.post('/api/projects/:project/rename', async (req, res) => {
       return res.status(409).json({ error: `Project "${name}" already exists` });
     } catch {}
     await fsp.rename(dir, dest);
-    try {
-      const focusPath = path.join(SVG_DIR, '.focus.json');
-      const focus = JSON.parse(await fsp.readFile(focusPath, 'utf8'));
-      if (focus && focus.project === req.params.project) {
-        await fsp.writeFile(focusPath, JSON.stringify({ project: name }, null, 2));
-      }
-    } catch {}
+    if ((await readFocusRaw()) === req.params.project) {
+      await fsp.writeFile(FOCUS_FILE, JSON.stringify({ project: name }, null, 2));
+    }
     res.json({ ok: true, name });
   } catch (err) {
     res.status(500).json({ error: err.message });
