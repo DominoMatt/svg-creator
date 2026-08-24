@@ -60,7 +60,8 @@ up to date whenever you look.
   ⬇ Save all writes the whole project into a real folder of plain `.svg` files via the
   File System Access API (per-file download fallback elsewhere) — deliberately no zip
 - **Agent targeting** — 🎯 Target marks which project agents should edit
-  (persisted as `public/svgs/.focus.json`)
+  (persisted as `public/svgs/.focus.json`); deleting the targeted project clears it,
+  and the sidebar says so when no target is set
 - **Connection status** — a pill in the header shows whether the browser is connected
   to the server; it reconnects automatically and resyncs everything on reconnect, and
   clicking it forces an immediate reconnect + resync
@@ -84,10 +85,12 @@ can use them too.
 | `GET` | `/api/projects/:name/options/:id` | Fetch one option's SVG |
 | `DELETE` | `/api/projects/:name/options` | Dismiss all options |
 | `DELETE` | `/api/projects/:name/options/:id` | Dismiss one option |
+| `POST` | `/api/projects/:name/options/delete` | Bulk-dismiss options `{ids, confirm: true}` — UI confirms first |
 | `POST` | `/api/projects/:name/select` | Promote an option to `current.svg` (option stays in tray) |
 | `POST` | `/api/projects/:name/commit` | Commit current → `versions/vNNN-<label>.svg`; or direct-commit an option via `{option: id}` (✓ marked, stays in tray) |
 | `GET` | `/api/projects/:name/versions` | List versions (+ timestamps, labels) |
 | `GET` | `/api/projects/:name/versions/:id` | Fetch one version |
+| `PUT` | `/api/projects/:name/versions/:id` | Direct-write a version file (used by ⬆ Load project import) |
 | `POST` | `/api/projects/:name/versions/:id/rename` | Rename a version's label `{ label }` — keeps its vNNN number |
 | `POST` | `/api/projects/:name/versions/delete` | Bulk-delete versions `{ids, confirm: true}` — UI confirms first |
 | `POST` | `/api/projects/:name/rollback/:id` | Restore version as current (no auto-commit) |
@@ -95,15 +98,17 @@ can use them too.
 | `GET` | `/api/focus` | Which project the user 🎯-targeted for agents |
 | `PUT` | `/api/focus` | Set agent target `{ project }` — written by the UI Target button |
 | `GET` | `/api/events` | SSE stream — events: `projects-changed`, `current-changed`, `versions-changed`, `options-changed`, `focus-changed` |
-| `GET` | `/api/conventions` | Agent workflow rules (read-only `AGENTS.md` mirror, always current) |
+| `GET` | `/api/conventions` | Browser-agent workflow rules (read-only `BROWSER_AGENTS.md` mirror, always current) |
 
 ## Working with an AI agent
 
-Point your coding agent at [AGENTS.md](AGENTS.md) — it defines the workflow: read before
-writing, propose several options for open-ended changes (and skip options for trivial
-ones), never commit on the user's behalf, prefer quiet file-tool operations over terminal
-commands, and resolve the 🎯 target before touching anything.
+Three doors, picked by what the agent can reach and what the job is:
 
-## More
-
-- [AGENTS.md](AGENTS.md) — agent workflow rules (source of truth)
+- **Coding agent designing SVGs with you** → [AGENTS.md](AGENTS.md). It works in
+  `public/svgs/` with plain file tools: reads before writing, proposes options for
+  open-ended asks, edits directly for simple ones, never commits, moves the 🎯 target
+  when you name a project in chat.
+- **Browser agent** (reaches the app through the page) → [BROWSER_AGENTS.md](BROWSER_AGENTS.md),
+  served live at `GET /api/conventions`. Same rules, expressed as API calls — the
+  file is written so the agent uses the API even if it happens to have file tools.
+- **Coding agent changing the app itself** → [DEVELOPING.md](DEVELOPING.md).
