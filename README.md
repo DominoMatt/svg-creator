@@ -30,6 +30,9 @@ public/svgs/
 Because designs are plain files, a coding agent participates with ordinary file tools,
 and the browser live-reloads whatever changes — the server polls file mtimes (~800ms)
 and pushes SSE events, and the UI fully resyncs whenever its connection (re)opens.
+In practice that means you never wait on the agent or refresh: while it edits the
+🎯-targeted project's `current.svg`, keep doing anything else — the targeted `current.svg` canvas is simply
+up to date whenever you look.
 
 ## Features
 

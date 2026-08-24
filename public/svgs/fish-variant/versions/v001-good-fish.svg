@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
+  <g transform="translate(-33.75 -82.5) scale(1.25) rotate(90 107 186)">
+  <g fill="#ffffff" stroke="#000000" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <!-- tail -->
+    <path d="M142 172 L206 134 C195 162 195 218 206 246 L142 208 Z"/>
+    <!-- dorsal fin: swept back toward tail -->
+    <path d="M72 150 Q87 126 114 112 L136 162"/>
+    <!-- belly fin -->
+    <path d="M80 230 Q86 253 112 262 L133 219"/>
+    <!-- body -->
+    <path d="M24 190 C36 128 148 128 160 190 C148 252 36 252 24 190 Z"/>
+    <!-- eye -->
+    <circle cx="52" cy="176" r="9" stroke-width="2"/>
+  </g>
+  <circle cx="52" cy="176" r="3.5" fill="#000000"/>
+  <g fill="none" stroke="#000000" stroke-width="3.5" stroke-linecap="round">
+    <!-- mouth -->
+    <path d="M27 191 Q37 198 47 194"/>
+    <!-- head line -->
+    <path d="M74 158 Q62 190 76 220" stroke-width="3"/>
+    <!-- gills -->
+    <path d="M82 166 Q94 182 82 198" stroke-width="2"/>
+    <path d="M98 171 Q106 182 98 193" stroke-width="2"/>
+  </g>
+  </g>
+</svg>

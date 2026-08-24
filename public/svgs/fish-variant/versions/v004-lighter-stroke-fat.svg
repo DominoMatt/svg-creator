@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
+  <g transform="translate(-33.75 -82.5) scale(1.25) rotate(90 107 186)">
+  <g fill="#ffffff" stroke="#000000" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <!-- tail: short and stubby -->
+    <path d="M144 174 L196 142 C188 164 188 216 196 238 L144 206 Z"/>
+    <!-- dorsal fin: small and rounded -->
+    <path d="M74 152 Q88 132 108 118 L128 158"/>
+    <!-- belly fin: small and rounded -->
+    <path d="M82 232 Q88 250 106 258 L126 222"/>
+    <!-- body: chubbier -->
+    <path d="M22 190 C34 120 150 120 162 190 C150 260 34 260 22 190 Z"/>
+    <!-- eye: big and friendly -->
+    <circle cx="52" cy="176" r="11" stroke-width="1"/>
+  </g>
+  <circle cx="52" cy="176" r="4.5" fill="#000000"/>
+  <g fill="none" stroke="#000000" stroke-width="1.75" stroke-linecap="round">
+    <!-- mouth -->
+    <path d="M24 191 Q34 198 44 194"/>
+    <!-- head line -->
+    <path d="M74 158 Q62 190 76 220" stroke-width="1.5"/>
+    <!-- gills -->
+    <path d="M80 166 Q92 182 80 198" stroke-width="1"/>
+    <path d="M96 171 Q104 182 96 193" stroke-width="1"/>
+  </g>
+  </g>
+</svg>
