@@ -112,7 +112,7 @@ const optionSvg =
 const OPTION_ID = 'option-a-golden.svg';
 
 test('option written straight to disk becomes visible via API', async () => {
-  // AGENTS.md rule 8: agents submit options by writing files. The mtime
+  // AGENTS.md rule 3: agents submit options by writing files. The mtime
   // poller (~800ms) is what makes that visible to live clients.
   const dir = path.join(ROOT, 'public', 'svgs', NAME, 'options');
   await fsp.mkdir(dir, { recursive: true });
@@ -236,6 +236,24 @@ test('POST round leaves the ✓-tracker (state.json) untouched', async () => {
   );
 });
 
+test('✓-mark is dropped when the option file is deleted by hand', async () => {
+  // A file-tool agent clears the tray by deleting option files (AGENTS.md
+  // rule 3) without knowing about state.json. The server prunes stale marks
+  // on read so a later option reusing the name starts unmarked.
+  const dir = path.join(ROOT, 'public', 'svgs', NAME, 'options');
+  await req('DELETE', `/api/projects/${NAME}/options`, {});
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, OPTION_ID), optionSvg);
+  await req('POST', `/api/projects/${NAME}/commit`, { option: OPTION_ID });
+  let opts = await (await req('GET', `/api/projects/${NAME}/options`)).json();
+  assert.equal(opts.find((o) => o.id === OPTION_ID)?.committed, true);
+  await fsp.rm(path.join(dir, OPTION_ID));
+  await req('GET', `/api/projects/${NAME}/options`); // prune happens here
+  await fsp.writeFile(path.join(dir, OPTION_ID), svg2); // same name, new content
+  opts = await (await req('GET', `/api/projects/${NAME}/options`)).json();
+  assert.equal(opts.find((o) => o.id === OPTION_ID)?.committed, false);
+});
+
 test('posted options are fetchable individually', async () => {
   await req('DELETE', `/api/projects/${NAME}/options`, {});
   const r = await req('POST', `/api/projects/${NAME}/options`, { label: 'fetch-me', svg: svg1 });
@@ -276,17 +294,17 @@ test('unknown /api paths get a JSON signpost + Link header', async () => {
 
 /* ---------------- conventions mirror ---------------- */
 
-test('GET /api/conventions mirrors AGENTS.md as markdown', async () => {
+test('GET /api/conventions mirrors BROWSER_AGENTS.md as markdown', async () => {
   const r = await req('GET', '/api/conventions');
   assert.equal(r.status, 200);
   assert.ok((r.headers.get('content-type') || '').includes('text/markdown'));
   const text = await r.text();
-  const disk = await fsp.readFile(path.join(ROOT, 'AGENTS.md'), 'utf8');
+  const disk = await fsp.readFile(path.join(ROOT, 'BROWSER_AGENTS.md'), 'utf8');
   assert.equal(text, disk);
 });
 
-test('conventions reflect AGENTS.md edits without a restart', async () => {
-  const file = path.join(ROOT, 'AGENTS.md');
+test('conventions reflect BROWSER_AGENTS.md edits without a restart', async () => {
+  const file = path.join(ROOT, 'BROWSER_AGENTS.md');
   const original = await fsp.readFile(file, 'utf8');
   try {
     await fsp.writeFile(file, original + '\n<!-- selftest-live-edit-marker -->\n');
@@ -305,4 +323,34 @@ test('focus set + restore leaves .focus.json untouched', async () => {
   assert.equal(((await (await req('GET', '/api/focus')).json()).project), NAME);
   await req('PUT', '/api/focus', { project: orig });
   assert.equal(((await (await req('GET', '/api/focus')).json()).project) ?? null, orig);
+});
+
+test('deleting the targeted project clears focus — in the API and on disk', async () => {
+  const orig = ((await (await req('GET', '/api/focus')).json()).project) ?? null;
+  const tmp = `${NAME}-focus`;
+  try {
+    await req('POST', '/api/projects', { name: tmp });
+    await req('PUT', '/api/focus', { project: tmp });
+    assert.equal((await (await req('GET', '/api/focus')).json()).project, tmp);
+    await req('DELETE', `/api/projects/${tmp}`, { confirm: true });
+    assert.equal((await (await req('GET', '/api/focus')).json()).project, null);
+    const onDisk = JSON.parse(await fsp.readFile(path.join(ROOT, 'public', 'svgs', '.focus.json'), 'utf8'));
+    assert.equal(onDisk.project, null, 'file-tool agents must not see the dead name either');
+  } finally {
+    await req('DELETE', `/api/projects/${tmp}`, { confirm: true }).catch(() => {});
+    await req('PUT', '/api/focus', { project: orig });
+  }
+});
+
+test('focus naming a missing project reads as no target', async () => {
+  const orig = ((await (await req('GET', '/api/focus')).json()).project) ?? null;
+  try {
+    await fsp.writeFile(
+      path.join(ROOT, 'public', 'svgs', '.focus.json'),
+      JSON.stringify({ project: 'zz-does-not-exist' })
+    );
+    assert.equal((await (await req('GET', '/api/focus')).json()).project, null);
+  } finally {
+    await req('PUT', '/api/focus', { project: orig });
+  }
 });
