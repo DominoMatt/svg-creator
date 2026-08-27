@@ -21,6 +21,7 @@
   - Each of those components have sub-components and so on.
 - A highly componentized svg will be hierarchical and nested... this is fine.
   - The svg code should reflect this hierarchy.
+    - The nesting will help 'see' the svg better in code.
 - Each component should have a label as a <!comment>.
 
 ### When modifying an existing svg
@@ -43,11 +44,13 @@
 
 ### Inferring components
 
-- First and foremost, ask the USER to help.
+- First and foremost, the USER is here to help... ask them to aid the AGENT.
 - Think about what the image is and logically determine what components it might contain.
 - The USER and AGENT are collaborating in this conversion endeavor... but the USER has the final artistic license.
+- The USER needs to approve the final list.
 - Finally, after arriving at a final list of components... do the work.
 
-### Converting the file
+### Converting a 'flat' file
 
 - This section and subsections is going to be filled out by an AGENT, because I'm not to knowledgeable.
+- For the time being the AGENT should use their expertise and any examples in the project to accomplish this work... for now Fish is an example (not a great one) of a componentized file.
