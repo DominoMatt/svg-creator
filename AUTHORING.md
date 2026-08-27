@@ -21,13 +21,13 @@
   - Each of those components have sub-components and so on.
 - A highly componentized svg will be hierarchical and nested... this is fine.
   - The svg code should reflect this hierarchy.
-- Each component should have a label as <!comment>.
+- Each component should have a label as a <!comment>.
 
 ### When modifying an existing svg
 
 - Keep the existing code intact. There may be no reason to actually componentize it. 
 - If adding a new feature to existing svg, add it as a component; and don't worry about the rest of the legacy svg paths.
-- If it becomes clear that the existing svg code must be componentized, do so... see converting an svg below.
+- If it becomes clear that the existing svg code must be componentized, do so... see [converting an svg below](#converting-an-svg).
 
 ## Use relative positioning
 
@@ -39,6 +39,7 @@
 
 - Many svgs are single path objects.
 - Single path objects aren't necessarily very easy for an AGENT or USER to consider iteratively collaborating upon.
+- Each component created should have a label as a <!comment>.
 
 ### Inferring components
 
@@ -49,4 +50,4 @@
 
 ### Converting the file
 
-- This section is going to be filled out by an AGENT, because I'm not to knowledgeable.
+- This section and subsections is going to be filled out by an AGENT, because I'm not to knowledgeable.
