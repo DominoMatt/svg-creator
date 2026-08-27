@@ -23,6 +23,7 @@
   - The svg code should reflect this hierarchy.
     - The nesting will help 'see' the svg better in code.
 - Each component should have a label as a <!comment>.
+- For now Fish is an example (not a great one) of a componentized file.
 
 ### When modifying an existing svg
 
@@ -52,5 +53,5 @@
 
 ### Converting a 'flat' file
 
-- This section and subsections is going to be filled out by an AGENT, because I'm not to knowledgeable.
+- This section and subsections is going to be filled out by an AGENT eventually, because I'm not that knowledgeable.
 - For the time being the AGENT should use their expertise and any examples in the project to accomplish this work... for now Fish is an example (not a great one) of a componentized file.
