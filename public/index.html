@@ -81,7 +81,7 @@
   .canvas-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
   .viewer-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
   .svg-frame { display: flex; flex-direction: column; gap: .45rem; max-width: 100%; }
-  .svg-frame svg { max-width: 100%; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
+  .svg-host { max-width: 100%; }
   .placeholder { color: #999; text-align: center; max-width: 420px; line-height: 1.6; }
   .target-placeholder-btn { margin-top: .75rem; padding: .45rem .9rem; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: .875rem; }
   .target-placeholder-btn:hover { background: #0056b3; }
@@ -370,17 +370,29 @@ function pillBtn(label, title, onClick, disabled = false) {
   return b;
 }
 
+// The drawing's own styles for the viewer — inside the shadow root, because
+// page CSS can't reach in there (see below).
+const SVG_HOST_STYLE = '<style>svg{max-width:100%;filter:drop-shadow(0 2px 6px rgba(0,0,0,.12))}</style>';
+
 function renderSvg(svgText, title) {
   // The pill is re-parented into the frame on every render so it stays tied
   // to the svg's own box: centered with it, directly beneath it.
   const frame = document.createElement('div');
   frame.className = 'svg-frame';
-  frame.innerHTML = svgText;
-  frame.appendChild(currentSvgName);
+  // The SVG goes into a shadow root so it's isolated from the page in both
+  // directions: its ids can't shadow the app's own (an agent naming a part
+  // "toast" must not break toast()), a <style> inside it stays inside it, and
+  // page CSS doesn't restyle the drawing. <use href="#id"> and url(#id) still
+  // resolve within the shadow tree.
+  const host = document.createElement('div');
+  host.className = 'svg-host';
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = SVG_HOST_STYLE + svgText;
+  frame.append(host, currentSvgName);
   viewerContent.innerHTML = '';
   viewerContent.appendChild(frame);
   setNameArea(title, state.viewingVersion);
-  const svg = viewerContent.querySelector('svg');
+  const svg = root.querySelector('svg');
   if (svg) {
     const w = svg.getAttribute('width') || 'auto';
     const h = svg.getAttribute('height') || 'auto';
@@ -938,7 +950,7 @@ async function targetProject() {
     const title = currentSvgName.querySelector('.name-text')?.textContent || state.project;
     setNameArea(title, state.viewingVersion);
     // Also refresh the empty-project placeholder if it's showing
-    if (!viewerContent.querySelector('svg')) {
+    if (!viewerContent.querySelector('.svg-host')) {
       const isTargeted = true;
       const targetLabel = '🎯 TARGETED';
       viewerContent.innerHTML = `<div class="placeholder">No <code>current.svg</code> yet.<br>Click <b>&lt;/&gt; Code</b> to paste or type SVG source, then Save.<br>Or ask your agent to write one, or use <b>⬆ Load SVG</b>.<br><br><button class="target-placeholder-btn" onclick="targetProject()">${targetLabel}</button></div>`;

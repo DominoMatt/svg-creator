@@ -159,8 +159,9 @@ iterating on it has become painful, and only with the user.
 - `scale` scales stroke widths too. Size the drawing with `viewBox`, not `scale`; if you
   must scale a part, add `vector-effect="non-scaling-stroke"`.
 - `rotate(a)` rotates about the part's origin; `rotate(a cx cy)` about a point.
-- The drawing is shown inside a web page, so `id`s must be unique and specific to the
-  subject (`pelican-beak`) — never generic page words like `header`, `main`, `toast`.
-- A `<style>` block inside the SVG styles the whole page it's shown in. Use attributes
-  (`fill="…"`, `stroke="…"`), not `<style>`.
+- `id`s must be unique within the drawing; `<use>` and `href="#…"` resolve to the first
+  match.
+- Style with attributes (`fill="…"`, `stroke="…"`) on the part, not a `<style>` block —
+  a rule in `<style>` splits a part's look across two places, and the part is no longer
+  self-contained when copied.
 - A missing `xmlns`, an unclosed tag, or a stray `>` renders as a blank canvas.
