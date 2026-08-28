@@ -34,8 +34,12 @@ Same-origin `fetch()` from the SVG Studio tab, one call at a time. (A dedicated
 HTTP/fetch tool, if your harness has one, works the same way.)
 
 ```js
-// read
-const r = await fetch('/api/projects/fish/current'); return await r.text();
+// read JSON
+const r = await fetch('/api/projects'); return await r.json();
+
+// read raw SVG (current, an option, a version): NOT with fetch() — raw markup in a
+// JavaScript return value gets blocked by some harnesses. Open a scratch tab,
+// navigate it to the endpoint, and read the page (see Authoring content, step 3).
 
 // write current
 await fetch('/api/projects/fish/current', {
@@ -71,7 +75,9 @@ await fetch('/api/projects/fish/options', {
    is a signal to agents; it never changes what the canvas shows — don't write it
    for that.
 2. **Read before writing.** `GET` the project's `current`, its newest version, and
-   its entry in `/api/projects`. Re-`GET` at the start of every turn — the user may
+   its entry in `/api/projects`. Raw SVG is read in a scratch tab (navigate it to the
+   endpoint and read the page), never with `fetch()` in the app's tab — and never by
+   navigating the app's tab itself. Re-read at the start of every turn — the user may
    have changed things.
 3. **Edit or propose.** One obvious result (a stroke width, a named color, a text
    edit) → `PUT …/current`. Open-ended ("friendlier", "warmer") → `POST …/options`

@@ -6,10 +6,11 @@
 <!-- AI agents: this page is the human-facing UI of SVG Studio, a local server
      where a human and an AI agent iteratively design SVGs. You participate
      through the API only — not this page, not the filesystem: GET /api is a
-     route index and GET /api/conventions returns the workflow rules you must
-     follow. -->
+     route index, GET /api/conventions returns the workflow rules you must
+     follow, and GET /api/authoring says how to structure the SVG markup. -->
 <meta name="api-index" content="/api">
 <meta name="agent-conventions" content="/api/conventions">
+<meta name="agent-authoring" content="/api/authoring">
 <title>SVG Studio</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,7 +25,17 @@
   button.danger { background: #dc3545; } button.danger:hover { background: #a71d2a; }
   button.small { padding: .22rem .55rem; font-size: .72rem; }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  .status-pill { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .85rem; border-radius: 999px; font-size: .8rem; margin-left: auto; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  .icon-btn { background: transparent; color: #444; font-size: 1.15rem; line-height: 1; padding: .2rem .4rem; border-radius: 4px; }
+  .icon-btn:hover { background: #eee; }
+  .status-pill { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .85rem; border-radius: 999px; font-size: .8rem; }
+  dialog { margin: auto; border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; width: min(680px, 92vw); box-shadow: 0 8px 30px rgba(0,0,0,.18); color: #333; }
+  dialog::backdrop { background: rgba(0,0,0,.3); }
+  .dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
+  .dlg-head h3 { font-size: 1rem; }
+  .dlg-hint { font-size: .82rem; color: #666; margin-bottom: .6rem; line-height: 1.5; }
+  #agentPromptText { width: 100%; height: 300px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8rem; line-height: 1.5; padding: .6rem; border: 1px solid #ccc; border-radius: 4px; resize: vertical; color: #24292f; background: #fafbfc; }
+  .dlg-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .6rem; }
   .status-pill::before { content: ''; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
   .status-pill.ok { background: #d1e7dd; color: #0f5132; }
   .status-pill.ok:hover { background: #bcd9c9; }
@@ -95,7 +106,10 @@
     <button id="saveAllBtn" class="secondary" disabled title="Save current.svg plus every committed version into a folder of plain .svg files">Save project</button>
     <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete project</button>
   </div>
-  <button id="statusPill" class="status-pill down" title="Connection to the server — click to reconnect and resync">Connecting…</button>
+  <div class="header-right">
+    <button id="agentPromptBtn" class="icon-btn" title="Bootstrap a browser agent — a copyable prompt that tells it what this app is and where its docs are">🤖</button>
+    <button id="statusPill" class="status-pill down" title="Connection to the server — click to reconnect and resync">Connecting…</button>
+  </div>
 </header>
 <main>
   <aside class="sidebar">
@@ -135,6 +149,18 @@
   </section>
 </main>
 <div class="toast" id="toast"></div>
+
+<dialog id="agentPromptDlg">
+  <div class="dlg-head">
+    <h3>🤖 Bootstrap a browser agent</h3>
+    <button id="agentPromptClose" class="small secondary">Close</button>
+  </div>
+  <p class="dlg-hint">Paste this into the agent's chat. It names this server and points the agent at the live docs, which it reads on its own.</p>
+  <textarea id="agentPromptText" readonly spellcheck="false"></textarea>
+  <div class="dlg-actions">
+    <button id="agentPromptCopy">Copy prompt</button>
+  </div>
+</dialog>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -1089,6 +1115,48 @@ function connect() {
 
 // Click the pill to force an immediate reconnect + full resync
 $('statusPill').addEventListener('click', connect);
+
+/* ---------- browser-agent bootstrap prompt ---------- */
+
+// Built at click time so it always carries the URL this page is actually
+// served from. The prompt only orients the agent; the rules themselves live
+// in the served docs, so nothing here has to stay in sync with them.
+function agentBootstrapPrompt() {
+  const base = location.origin;
+  return [
+    `You are joining SVG Studio, a local app at ${base} where a person and an AI agent design SVGs together. You write designs by calling the app's HTTP API with fetch() from a JavaScript tool running in the app's tab. If your harness has no tool that executes JavaScript in a browser tab, stop here and tell me you don't have the capabilities to collaborate in this application. Do not use file or shell tools for anything to do with SVG Studio.`,
+    '',
+    'Do these three steps, in order, before anything else:',
+    '',
+    `1. Check your tab context. The tab at ${base} titled "SVG Studio" is the app, and I am watching it — never navigate that tab anywhere else.`,
+    '2. Open a NEW tab and read these two documents there, one after the other, with your page-reading tool (not with fetch() — raw markup in a JavaScript return value gets blocked by some harnesses). Close the tab when you are done.',
+    `   ${base}/api/conventions — the workflow rules`,
+    `   ${base}/api/authoring — how to structure the SVG markup`,
+    `3. In the app tab, read the endpoint index with the JavaScript tool: await (await fetch('${base}/api')).json()`,
+    '',
+    'Follow both documents for the rest of this session. When you have finished the three steps, tell me which project is currently targeted and wait for my first request.'
+  ].join('\n');
+}
+
+$('agentPromptBtn').addEventListener('click', () => {
+  $('agentPromptText').value = agentBootstrapPrompt();
+  $('agentPromptDlg').showModal();
+});
+$('agentPromptClose').addEventListener('click', () => $('agentPromptDlg').close());
+// Click on the backdrop (outside the dialog's box) closes it too
+$('agentPromptDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+$('agentPromptCopy').addEventListener('click', async () => {
+  const ta = $('agentPromptText');
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    toast('Prompt copied');
+  } catch {
+    // Clipboard API needs a secure context / permission; leave the text selected so Ctrl/Cmd+C works
+    ta.focus();
+    ta.select();
+    toast('Clipboard blocked — text selected, press Ctrl/Cmd+C');
+  }
+});
 
 connect();
 </script>

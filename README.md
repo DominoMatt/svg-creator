@@ -62,6 +62,9 @@ up to date whenever you look.
 - **Agent targeting** — 🎯 Target marks which project agents should edit
   (persisted as `public/svgs/.focus.json`); deleting the targeted project clears it,
   and the sidebar says so when no target is set
+- **Agent bootstrap** — 🤖 in the header opens a copyable prompt that tells a browser
+  agent what the app is, gives it this server's URL, and points it at the live docs
+  (`/api/conventions`, `/api/authoring`, `/api`)
 - **Connection status** — a pill in the header shows whether the browser is connected
   to the server; it reconnects automatically and resyncs everything on reconnect, and
   clicking it forces an immediate reconnect + resync
