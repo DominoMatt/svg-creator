@@ -99,6 +99,7 @@ can use them too.
 | `PUT` | `/api/focus` | Set agent target `{ project }` — written by the UI Target button |
 | `GET` | `/api/events` | SSE stream — events: `projects-changed`, `current-changed`, `versions-changed`, `options-changed`, `focus-changed` |
 | `GET` | `/api/conventions` | Browser-agent workflow rules (read-only `BROWSER_AGENTS.md` mirror, always current) |
+| `GET` | `/api/authoring` | How to structure SVG markup (read-only `AUTHORING.md` mirror, always current) |
 
 ## Working with an AI agent
 
@@ -112,3 +113,8 @@ Three doors, picked by what the agent can reach and what the job is:
   served live at `GET /api/conventions`. Same rules, expressed as API calls — the
   file is written so the agent uses the API even if it happens to have file tools.
 - **Coding agent changing the app itself** → [DEVELOPING.md](DEVELOPING.md).
+
+Both designing doors share [AUTHORING.md](AUTHORING.md) (served at `GET /api/authoring`):
+how the SVG markup itself should be structured — named parts in nested groups, each
+drawn around its own origin and placed by `transform` — so that "make the eye bigger"
+lands on one obvious place in the source. The `fish` project is its worked example.

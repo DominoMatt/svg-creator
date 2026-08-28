@@ -38,7 +38,8 @@ public/svgs/
 3. **Edit or propose.** One obvious result (a stroke width, a named color, a text
    edit) → change `current.svg` directly. Open-ended ("friendlier", "warmer") → write
    2–3 files into `options/` and let the user pick in the browser. New options append
-   to the tray; clear it only when asked.
+   to the tray; clear it only when asked. Write the markup the way
+   [AUTHORING.md](AUTHORING.md) shows — named parts, placed by `transform`.
 4. **Never finalize.** Don't copy anything into `versions/`, and don't copy an option
    into `current.svg`. Suggest it: "Looks good — want to commit this as v004?"
 5. **Check your work.** Re-read what you wrote before saying it's ready. Broken

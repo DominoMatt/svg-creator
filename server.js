@@ -292,7 +292,7 @@ app.delete('/api/projects/:project', async (req, res) => {
 app.get('/api', (_req, res) => {
   res.json({
     name: 'SVG Studio',
-    startHere: { conventions: '/api/conventions' },
+    startHere: { conventions: '/api/conventions', authoring: '/api/authoring' },
     events: '/api/events',
     endpoints: [
       ['GET', '/api/projects', 'list projects'],
@@ -314,6 +314,7 @@ app.get('/api', (_req, res) => {
       ['POST', '/api/projects/:name/fork', 'fork to new project {name, version?}'],
       ['GET|PUT', '/api/focus', 'agent 🎯 target {project}'],
       ['GET', '/api/conventions', 'workflow rules — read first'],
+      ['GET', '/api/authoring', 'how to structure the SVG markup — read before composing'],
       ['GET', '/api/events', 'SSE change stream']
     ].map(([method, path, purpose]) => ({ method, path, purpose }))
   });
@@ -331,6 +332,19 @@ app.get('/api/conventions', async (_req, res) => {
     res.send(data);
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Conventions file not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AUTHORING.md mirror — how to structure the SVG markup itself. Same contract
+// as /api/conventions: read per-request, GET only.
+app.get('/api/authoring', async (_req, res) => {
+  try {
+    const data = await fsp.readFile(path.join(__dirname, 'AUTHORING.md'), 'utf8');
+    res.set('Content-Type', 'text/markdown; charset=utf-8');
+    res.send(data);
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Authoring guide not found' });
     res.status(500).json({ error: err.message });
   }
 });

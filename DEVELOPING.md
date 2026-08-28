@@ -29,6 +29,9 @@ npm test      # spawns its own server on a free port — no setup
 - **A workflow rule changes** → both `AGENTS.md` and `BROWSER_AGENTS.md`: same rule
   number, same title, only the *how* differs. Rules are behavioral ("do X"); server
   internals don't belong in them.
+- **`AUTHORING.md` changes** → it is served verbatim at `GET /api/authoring`, so it must
+  stay free of file paths (browser agents read it too). Its embedded fish example
+  mirrors `public/svgs/fish/current.svg` — change both or neither.
 
 ## The data folder
 

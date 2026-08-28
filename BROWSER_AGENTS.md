@@ -61,6 +61,7 @@ await fetch('/api/projects/fish/options', {
 | `GET` / `POST /api/projects/:name/options` | GET lists the tray; POST submits `{options: [{label, svg}]}` (max 6) or a single `{label, svg}` |
 | `GET /api/projects/:name/options/:id` | one option's raw SVG |
 | `DELETE /api/projects/:name/options` | clear the tray |
+| `GET /api/authoring` | how to structure the SVG markup — read before composing |
 
 ## Rules
 
@@ -76,7 +77,8 @@ await fetch('/api/projects/fish/options', {
    edit) → `PUT …/current`. Open-ended ("friendlier", "warmer") → `POST …/options`
    with 2–3 labeled variants and let the user pick in the app. New options append to
    the tray; clear it only when asked. Write the SVG markup in the request body —
-   never type it into the app's code editor.
+   never type it into the app's code editor — and structure it the way
+   `GET /api/authoring` shows: named parts, placed by `transform`.
 4. **Never finalize.** Don't call `POST …/commit` or `POST …/select`. Suggest it:
    "Looks good — want me to commit this as v004?" and wait for a yes.
 5. **Check your work.** Render it as in **Authoring content** step 3 before saying
