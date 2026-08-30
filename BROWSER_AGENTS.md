@@ -34,8 +34,12 @@ Same-origin `fetch()` from the SVG Studio tab, one call at a time. (A dedicated
 HTTP/fetch tool, if your harness has one, works the same way.)
 
 ```js
-// read
-const r = await fetch('/api/projects/fish/current'); return await r.text();
+// read JSON
+const r = await fetch('/api/projects'); return await r.json();
+
+// read raw SVG (current, an option, a version): NOT with fetch() — raw markup in a
+// JavaScript return value gets blocked by some harnesses. Open a scratch tab,
+// navigate it to the endpoint, and read the page (see Authoring content, step 3).
 
 // write current
 await fetch('/api/projects/fish/current', {
@@ -61,6 +65,7 @@ await fetch('/api/projects/fish/options', {
 | `GET` / `POST /api/projects/:name/options` | GET lists the tray; POST submits `{options: [{label, svg}]}` (max 6) or a single `{label, svg}` |
 | `GET /api/projects/:name/options/:id` | one option's raw SVG |
 | `DELETE /api/projects/:name/options` | clear the tray |
+| `GET /api/authoring` | how to structure the SVG markup — read before composing |
 
 ## Rules
 
@@ -70,13 +75,16 @@ await fetch('/api/projects/fish/options', {
    is a signal to agents; it never changes what the canvas shows — don't write it
    for that.
 2. **Read before writing.** `GET` the project's `current`, its newest version, and
-   its entry in `/api/projects`. Re-`GET` at the start of every turn — the user may
+   its entry in `/api/projects`. Raw SVG is read in a scratch tab (navigate it to the
+   endpoint and read the page), never with `fetch()` in the app's tab — and never by
+   navigating the app's tab itself. Re-read at the start of every turn — the user may
    have changed things.
 3. **Edit or propose.** One obvious result (a stroke width, a named color, a text
    edit) → `PUT …/current`. Open-ended ("friendlier", "warmer") → `POST …/options`
    with 2–3 labeled variants and let the user pick in the app. New options append to
    the tray; clear it only when asked. Write the SVG markup in the request body —
-   never type it into the app's code editor.
+   never type it into the app's code editor — and structure it the way
+   `GET /api/authoring` shows: named parts, placed by `transform`.
 4. **Never finalize.** Don't call `POST …/commit` or `POST …/select`. Suggest it:
    "Looks good — want me to commit this as v004?" and wait for a yes.
 5. **Check your work.** Render it as in **Authoring content** step 3 before saying

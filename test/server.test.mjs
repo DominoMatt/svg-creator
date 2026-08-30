@@ -303,6 +303,21 @@ test('GET /api/conventions mirrors BROWSER_AGENTS.md as markdown', async () => {
   assert.equal(text, disk);
 });
 
+test('GET /api/authoring mirrors AUTHORING.md as markdown', async () => {
+  const r = await req('GET', '/api/authoring');
+  assert.equal(r.status, 200);
+  assert.ok((r.headers.get('content-type') || '').includes('text/markdown'));
+  const text = await r.text();
+  const disk = await fsp.readFile(path.join(ROOT, 'AUTHORING.md'), 'utf8');
+  assert.equal(text, disk);
+});
+
+test('AUTHORING.md embeds the fish example verbatim', async () => {
+  const doc = await fsp.readFile(path.join(ROOT, 'AUTHORING.md'), 'utf8');
+  const fish = await fsp.readFile(path.join(ROOT, 'public', 'svgs', 'fish', 'current.svg'), 'utf8');
+  assert.ok(doc.includes(fish.trim()), 'AUTHORING.md fish example drifted from public/svgs/fish/current.svg');
+});
+
 test('conventions reflect BROWSER_AGENTS.md edits without a restart', async () => {
   const file = path.join(ROOT, 'BROWSER_AGENTS.md');
   const original = await fsp.readFile(file, 'utf8');
