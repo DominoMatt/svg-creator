@@ -15,12 +15,25 @@ npm test      # spawns its own server on a free port — no setup
 
 - Every design is plain files under `public/svgs/<project>/` — no database.
   `server.js` is one Express file; `public/index.html` is the whole UI, no build step.
+- `public/multi-view.html` is a second, human-only page opened from `index.html`'s
+  **Multi-view** button. It is a pure client-side view: it reads via the existing
+  API and writes only through `PUT …/current` on "Close & apply". It never creates
+  files and is not an agent surface — agents keep working on `current.svg` as usual.
+  Before closing it signals its opener via `window.opener.multiViewResult(project,
+  result)` (`'apply-keep'` or `'apply-focus'`); `index.html` only moves focus on
+  `'apply-focus'`.
 - Change detection: the server diffs file mtimes every 800 ms and pushes SSE hints
   on `/api/events`. The browser re-fetches on each hint and fully resyncs whenever
   its connection (re)opens. Any writer — the UI, file tools, HTTP — shows up the
   same way.
 - Commits are human-gated. Only the UI's Commit / Use buttons (and the endpoints
   behind them) write `versions/` or promote options. Keep it that way.
+- Undo: every overwrite of `current.svg` goes through the `writeCurrent(dir, svg)`
+  helper (or the poller's content cache for file-tool writes), which captures the
+  previous content into `old-current.svg`. `POST …/undo` swaps the two files and
+  deliberately bypasses `writeCurrent` so it doesn't re-capture. `old-current.svg`
+  is excluded from the mtime poller and git-ignored — it's transient bookkeeping,
+  not a design file.
 
 ## Keep in sync
 
@@ -37,7 +50,9 @@ npm test      # spawns its own server on a free port — no setup
 
 `public/svgs/` holds the user's designs. Some are committed as examples, some are
 not. Don't `git add`, commit, or delete anything in it unless told. `.focus.json`
-is git-ignored — it's per-machine state.
+is git-ignored — it's per-machine state. `old-current.svg` (the undo slot) is also
+git-ignored and excluded from the change poller — it's regenerated on every
+overwrite of `current.svg`.
 
 ## Git
 

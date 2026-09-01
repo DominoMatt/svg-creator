@@ -156,6 +156,58 @@ test('rollback restores a version into current', async () => {
   assert.ok(back.includes('goldenrod'), 'current should match rolled-back version');
 });
 
+/* ---------------- undo (old-current.svg) ---------------- */
+
+const OLD_CURRENT = 'old-current.svg';
+const oldPath = () => path.join(ROOT, 'public', 'svgs', NAME, OLD_CURRENT);
+
+test('PUT captures the previous current into old-current.svg', async () => {
+  // current is goldenrod (from rollback); overwrite with svg1 → old-current should be goldenrod
+  await req('PUT', `/api/projects/${NAME}/current`, { svg: svg1 });
+  const old = await fsp.readFile(oldPath(), 'utf8');
+  assert.ok(old.includes('goldenrod'), 'old-current should hold the pre-overwrite content');
+  const cur = await (await req('GET', `/api/projects/${NAME}/current`)).text();
+  assert.ok(cur.includes('steelblue'), 'current should now be svg1');
+});
+
+test('undo swaps current back to old-current', async () => {
+  const r = await req('POST', `/api/projects/${NAME}/undo`, {});
+  const body = await r.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.undone, true);
+  const cur = await (await req('GET', `/api/projects/${NAME}/current`)).text();
+  assert.ok(cur.includes('goldenrod'), 'current should be the pre-overwrite content after undo');
+  // The swap is symmetric: old-current now holds what current had (svg1).
+  const old = await fsp.readFile(oldPath(), 'utf8');
+  assert.ok(old.includes('steelblue'), 'old-current should hold the swapped-out content');
+});
+
+test('undo again swaps back (toggle works both directions)', async () => {
+  const r = await req('POST', `/api/projects/${NAME}/undo`, {});
+  const body = await r.json();
+  assert.equal(body.undone, true);
+  const cur = await (await req('GET', `/api/projects/${NAME}/current`)).text();
+  assert.ok(cur.includes('steelblue'), 'second undo should restore svg1');
+});
+
+test('undo with no old-current.svg reports undone:false', async () => {
+  await fsp.rm(oldPath(), { force: true });
+  const r = await req('POST', `/api/projects/${NAME}/undo`, {});
+  assert.equal(r.status, 404);
+  const body = await r.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.undone, false);
+});
+
+test('projects list reports hasOldCurrent', async () => {
+  // Recreate an old-current so the flag is true.
+  await req('PUT', `/api/projects/${NAME}/current`, { svg: svg2 });
+  const list = await (await req('GET', '/api/projects')).json();
+  const p = list.find((x) => x.name === NAME);
+  assert.ok(p, 'project should exist');
+  assert.equal(p.hasOldCurrent, true, 'hasOldCurrent should be true after an overwrite');
+});
+
 /* ---------------- delete guard ---------------- */
 
 test('project delete requires confirm flag', async () => {

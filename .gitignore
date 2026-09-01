@@ -2,3 +2,5 @@ node_modules/
 .env
 *.log
 public/svgs/.focus.json
+# Undo slot — transient, regenerated on every overwrite of current.svg
+public/svgs/**/old-current.svg

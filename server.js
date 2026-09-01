@@ -25,6 +25,9 @@ app.use('/api', (_req, res, next) => {
 
 const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const VERSION_ID_RE = /^v\d{3}-[a-zA-Z0-9_-]+\.svg$/;
+// Undo slot: holds the content current.svg had before its most recent
+// overwrite. A single per-project file, swapped with current.svg on undo.
+const OLD_CURRENT_FILE = 'old-current.svg';
 
 function safeProjectPath(name) {
   if (!PROJECT_NAME_RE.test(name)) return null;
@@ -56,6 +59,20 @@ async function listProjectNames() {
   } catch {
     return [];
   }
+}
+
+// The single choke point for overwriting current.svg. Before writing the new
+// content, the existing current.svg (if any) is captured into old-current.svg
+// so the Undo button can swap them back. The undo endpoint is the one write
+// that does NOT go through here (it manages both sides itself).
+async function writeCurrent(dir, svg) {
+  try {
+    const old = await fsp.readFile(path.join(dir, 'current.svg'), 'utf8');
+    await fsp.writeFile(path.join(dir, OLD_CURRENT_FILE), old);
+  } catch {
+    // No existing current.svg — nothing to capture.
+  }
+  await fsp.writeFile(path.join(dir, 'current.svg'), svg);
 }
 
 /* ---------------- SSE live updates ---------------- */
@@ -131,6 +148,9 @@ async function scanTree() {
     for (const e of entries) {
       // skip dotfiles except .focus.json (tracked so focus changes reach the UI)
       if (e.name.startsWith('.') && e.name !== '.focus.json') continue;
+      // skip the undo slot — writing it is internal bookkeeping, not a change
+      // the UI should react to
+      if (e.name === OLD_CURRENT_FILE) continue;
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         await walk(path.join(dir, e.name), r);
@@ -146,14 +166,42 @@ async function scanTree() {
 }
 
 let lastScan = null;
+// Content cache of each project's current.svg, refreshed every poll. Lets the
+// poller capture the pre-overwrite content into old-current.svg when a
+// current.svg changes by any means (including agent file-tool writes that
+// never touch the API). Keyed by project name.
+const currentCache = new Map();
 async function pollChanges() {
   const next = await scanTree();
   if (lastScan) {
     const keys = new Set([...Object.keys(lastScan), ...Object.keys(next)]);
     for (const k of keys) {
       if (lastScan[k] !== next[k]) {
+        // D4: capture the previous current.svg content into old-current.svg.
+        // Idempotent for API writes (writeCurrent already captured), and the
+        // only capture path for direct file-tool writes.
+        if (k.endsWith('/current.svg')) {
+          const project = k.slice(0, -'/current.svg'.length);
+          const prev = currentCache.get(project);
+          if (prev != null) {
+            try {
+              await fsp.writeFile(path.join(SVG_DIR, project, OLD_CURRENT_FILE), prev);
+            } catch {}
+          }
+        }
         const [event, payload] = classifyChange(k);
         broadcastDebounced(event, payload);
+      }
+    }
+  }
+  // Refresh the content cache for every current.svg we can read.
+  for (const k of Object.keys(next)) {
+    if (k.endsWith('/current.svg')) {
+      const project = k.slice(0, -'/current.svg'.length);
+      try {
+        currentCache.set(project, await fsp.readFile(path.join(SVG_DIR, k), 'utf8'));
+      } catch {
+        currentCache.delete(project);
       }
     }
   }
@@ -172,6 +220,7 @@ app.get('/api/projects', async (_req, res) => {
         const dir = safeProjectPath(name);
         let versionCount = 0;
         let hasCurrent = false;
+        let hasOldCurrent = false;
         let forkedFrom = null;
         try {
           versionCount = (await fsp.readdir(path.join(dir, 'versions'))).filter((f) => f.endsWith('.svg')).length;
@@ -181,10 +230,14 @@ app.get('/api/projects', async (_req, res) => {
           hasCurrent = true;
         } catch {}
         try {
+          await fsp.access(path.join(dir, OLD_CURRENT_FILE));
+          hasOldCurrent = true;
+        } catch {}
+        try {
           const meta = JSON.parse(await fsp.readFile(path.join(dir, 'meta.json'), 'utf8'));
           forkedFrom = meta.forkedFrom || null;
         } catch {}
-        return { name, hasCurrent, versionCount, forkedFrom };
+        return { name, hasCurrent, hasOldCurrent, versionCount, forkedFrom };
       })
     );
     res.json(projects);
@@ -311,6 +364,7 @@ app.get('/api', (_req, res) => {
       ['POST', '/api/projects/:name/versions/:id/rename', '{label}; keeps vNNN number'],
       ['POST', '/api/projects/:name/versions/delete', 'bulk-delete {ids, confirm:true}'],
       ['POST', '/api/projects/:name/rollback/:id', 'restore version as current (no auto-commit)'],
+      ['POST', '/api/projects/:name/undo', 'swap current with old-current (undo last overwrite)'],
       ['POST', '/api/projects/:name/fork', 'fork to new project {name, version?}'],
       ['GET|PUT', '/api/focus', 'agent 🎯 target {project}'],
       ['GET', '/api/conventions', 'workflow rules — read first'],
@@ -374,7 +428,7 @@ app.put('/api/projects/:project/current', async (req, res) => {
   }
   try {
     await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(path.join(dir, 'current.svg'), String(svg));
+    await writeCurrent(dir, String(svg));
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -707,7 +761,7 @@ app.post('/api/projects/:project/select', async (req, res) => {
   }
   try {
     const svg = await fsp.readFile(path.join(dir, 'options', String(id)), 'utf8');
-    await fsp.writeFile(path.join(dir, 'current.svg'), svg);
+    await writeCurrent(dir, svg);
     res.json({ ok: true, selected: id });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Option not found' });
@@ -752,10 +806,38 @@ app.post('/api/projects/:project/rollback/:id', async (req, res) => {
   if (!VERSION_ID_RE.test(id)) return res.status(400).json({ error: 'Invalid version id' });
   try {
     const svg = await fsp.readFile(path.join(dir, 'versions', id), 'utf8');
-    await fsp.writeFile(path.join(dir, 'current.svg'), svg);
+    await writeCurrent(dir, svg);
     res.json({ ok: true, restoredFrom: id });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Version not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Undo swaps current.svg with old-current.svg. It deliberately does NOT go
+// through writeCurrent (which would re-capture the pre-swap current into
+// old-current.svg, clobbering the very state we're restoring). Each press
+// swaps the two files, so undo can be toggled back and forth.
+app.post('/api/projects/:project/undo', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const currentPath = path.join(dir, 'current.svg');
+  const oldPath = path.join(dir, OLD_CURRENT_FILE);
+  try {
+    const old = await fsp.readFile(oldPath, 'utf8');
+    let cur = null;
+    try {
+      cur = await fsp.readFile(currentPath, 'utf8');
+    } catch {}
+    await fsp.writeFile(currentPath, old);
+    if (cur != null) {
+      await fsp.writeFile(oldPath, cur);
+    } else {
+      await fsp.rm(oldPath, { force: true });
+    }
+    res.json({ ok: true, undone: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ ok: true, undone: false });
     res.status(500).json({ error: err.message });
   }
 });
