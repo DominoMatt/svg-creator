@@ -105,6 +105,60 @@ test('reject write without svg markup', async () => {
   assert.equal(r.status, 400);
 });
 
+/* ---------------- temp-current (file-tree working copy) ---------------- */
+
+test('temp-current starts absent (404)', async () => {
+  const r = await req('GET', `/api/projects/${NAME}/temp-current`);
+  assert.equal(r.status, 404);
+});
+
+test('PUT temp-current stages without touching current', async () => {
+  // current is svg2 (tomato) from the earlier test.
+  const staged = svg1.replace('steelblue', 'seagreen');
+  const r = await req('PUT', `/api/projects/${NAME}/temp-current`, staged, 'image/svg+xml');
+  assert.equal((await r.json()).ok, true);
+  const back = await (await req('GET', `/api/projects/${NAME}/temp-current`)).text();
+  assert.ok(back.includes('seagreen'), 'temp-current should hold the staged content');
+  // current.svg must be untouched.
+  const cur = await (await req('GET', `/api/projects/${NAME}/current`)).text();
+  assert.ok(cur.includes('tomato'), 'current.svg should be unchanged by staging');
+});
+
+test('file-tree lists tempCurrent', async () => {
+  const data = await (await req('GET', '/api/file-tree')).json();
+  const p = data.projects.find((x) => x.name === NAME);
+  assert.ok(p.tempCurrent && p.tempCurrent.includes('seagreen'), 'file-tree should expose tempCurrent');
+});
+
+test('push moves temp-current into current and clears it', async () => {
+  const r = await req('POST', `/api/projects/${NAME}/temp-current/push`);
+  assert.equal((await r.json()).ok, true);
+  const cur = await (await req('GET', `/api/projects/${NAME}/current`)).text();
+  assert.ok(cur.includes('seagreen'), 'current.svg should now hold the pushed content');
+  const temp = await req('GET', `/api/projects/${NAME}/temp-current`);
+  assert.equal(temp.status, 404, 'temp-current should be removed after push');
+});
+
+test('push with no temp-current reports 404', async () => {
+  const r = await req('POST', `/api/projects/${NAME}/temp-current/push`);
+  assert.equal(r.status, 404);
+});
+
+test('discard removes temp-current without touching current', async () => {
+  await req('PUT', `/api/projects/${NAME}/temp-current`, svg2, 'image/svg+xml');
+  const r = await req('DELETE', `/api/projects/${NAME}/temp-current`);
+  assert.equal((await r.json()).ok, true);
+  const temp = await req('GET', `/api/projects/${NAME}/temp-current`);
+  assert.equal(temp.status, 404, 'temp-current should be gone after discard');
+  const cur = await (await req('GET', `/api/projects/${NAME}/current`)).text();
+  assert.ok(cur.includes('seagreen'), 'current.svg should be untouched by discard');
+});
+
+test('temp-current rejects non-svg body', async () => {
+  const r = await req('PUT', `/api/projects/${NAME}/temp-current`, { svg: 'nope' });
+  assert.equal(r.status, 400);
+});
+
 /* ---------------- options (file-tools path) ---------------- */
 
 const optionSvg =
