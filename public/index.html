@@ -110,6 +110,7 @@
     <button id="deleteBtn" class="danger" disabled title="Delete this project and its entire history">Delete project</button>
   </div>
   <div class="header-right">
+    <button id="fileTreeBtn" class="secondary" title="Open the file-tree view — a hierarchical outline of every project's SVG">🌳 File tree</button>
     <button id="agentPromptBtn" class="icon-btn" title="Bootstrap a browser agent — a copyable prompt that tells it what this app is and where its docs are">🤖</button>
     <button id="statusPill" class="status-pill down" title="Connection to the server — click to reconnect and resync">Connecting…</button>
   </div>
@@ -694,6 +695,11 @@ batchBar.register({
       toast(err.message);
     }
   }
+});
+
+// Open the file-tree view — a hierarchical outline of every project's SVG.
+$('fileTreeBtn').addEventListener('click', () => {
+  window.open('file-tree.html', '_blank');
 });
 
 // Open the multi-view comparison page for the selected options/versions.

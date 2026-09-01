@@ -23,6 +23,7 @@ the markup. Structure the drawing so that it does.
       <path id="body-outline" d="M -70 0 C -58 -70 58 -70 70 0 C 58 70 -58 70 -70 0 Z"/>
       <path id="head-line" d="M -18 -32 Q -30 0 -16 30" fill="none" stroke-width="3"/>
       <g id="gills" fill="none" stroke-width="2">
+        <!-- gill -->
         <path d="M -12 -24 Q 0 -8 -12 8"/>
         <path d="M 4 -19 Q 12 -8 4 3"/>
       </g>

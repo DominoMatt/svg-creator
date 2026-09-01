@@ -28,6 +28,10 @@ const VERSION_ID_RE = /^v\d{3}-[a-zA-Z0-9_-]+\.svg$/;
 // Undo slot: holds the content current.svg had before its most recent
 // overwrite. A single per-project file, swapped with current.svg on undo.
 const OLD_CURRENT_FILE = 'old-current.svg';
+// Working copy used by the file-tree view: renames are staged here and only
+// pushed into current.svg on an explicit "push". Kept out of the SSE change
+// classification (see classifyChange) so it doesn't disturb the main view.
+const TEMP_CURRENT_FILE = 'temp-current.svg';
 
 function safeProjectPath(name) {
   if (!PROJECT_NAME_RE.test(name)) return null;
@@ -246,6 +250,46 @@ app.get('/api/projects', async (_req, res) => {
   }
 });
 
+/* ---------------- file tree (file-tree.html) ----------------
+   Returns every project with its current.svg raw content plus version and
+   option listings, so the file-tree page can parse the SVG into a tree
+   client-side (no server-side XML dependency). */
+app.get('/api/file-tree', async (_req, res) => {
+  try {
+    const names = await listProjectNames();
+    const projects = await Promise.all(
+      names.map(async (name) => {
+        const dir = safeProjectPath(name);
+        let current = null;
+        try {
+          current = await fsp.readFile(path.join(dir, 'current.svg'), 'utf8');
+        } catch {}
+        let tempCurrent = null;
+        try {
+          tempCurrent = await fsp.readFile(path.join(dir, TEMP_CURRENT_FILE), 'utf8');
+        } catch {}
+        let versions = [];
+        try {
+          versions = (await fsp.readdir(path.join(dir, 'versions')))
+            .filter((f) => f.endsWith('.svg'))
+            .sort()
+            .reverse();
+        } catch {}
+        let options = [];
+        try {
+          options = (await fsp.readdir(path.join(dir, 'options')))
+            .filter((f) => f.endsWith('.svg'))
+            .sort();
+        } catch {}
+        return { name, current, tempCurrent, versions, options };
+      })
+    );
+    res.json({ projects });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/projects', async (req, res) => {
   const name = String((req.body && req.body.name) || '').trim();
   if (!PROJECT_NAME_RE.test(name)) {
@@ -349,10 +393,12 @@ app.get('/api', (_req, res) => {
     events: '/api/events',
     endpoints: [
       ['GET', '/api/projects', 'list projects'],
+      ['GET', '/api/file-tree', 'all projects with current.svg + temp-current + versions + options for the file-tree view'],
       ['POST', '/api/projects', 'create project {name}'],
       ['DELETE', '/api/projects/:name', 'delete project {confirm:true}'],
       ['POST', '/api/projects/:name/rename', 'rename project {name}'],
       ['GET|PUT', '/api/projects/:name/current', 'working copy (raw SVG or {svg})'],
+      ['GET|PUT|DELETE', '/api/projects/:name/temp-current', 'file-tree staged working copy | push via /temp-current/push'],
       ['GET|POST', '/api/projects/:name/options', 'list tray | submit round {options:[{label,svg}]}, max 6'],
       ['GET|DELETE', '/api/projects/:name/options/:id', 'fetch | dismiss one option'],
       ['DELETE', '/api/projects/:name/options', 'dismiss all options'],
@@ -431,6 +477,71 @@ app.put('/api/projects/:project/current', async (req, res) => {
     await writeCurrent(dir, String(svg));
     res.json({ ok: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- temp current (file-tree working copy) ----------------
+   The file-tree view stages renames into temp-current.svg instead of writing
+   current.svg directly. It reads/writes this file, and only pushes it into
+   current.svg on an explicit "push". */
+
+app.get('/api/projects/:project/temp-current', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  try {
+    const data = await fsp.readFile(path.join(dir, TEMP_CURRENT_FILE), 'utf8');
+    res.set('Content-Type', 'image/svg+xml');
+    res.send(data);
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'No temp-current.svg yet' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stage a working copy. Unlike PUT /current, this does NOT capture an undo
+// slot — temp-current.svg is a scratch file, not a committed state.
+app.put('/api/projects/:project/temp-current', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  const svg = typeof req.body === 'string' ? req.body : req.body && req.body.svg;
+  if (!svg || !String(svg).includes('<svg')) {
+    return res.status(400).json({ error: 'Body must contain SVG markup' });
+  }
+  try {
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, TEMP_CURRENT_FILE), String(svg));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Push the staged working copy into current.svg (capturing an undo slot via
+// writeCurrent), then remove temp-current.svg so the tree returns to clean.
+app.post('/api/projects/:project/temp-current/push', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  try {
+    const staged = await fsp.readFile(path.join(dir, TEMP_CURRENT_FILE), 'utf8');
+    await writeCurrent(dir, staged);
+    await fsp.unlink(path.join(dir, TEMP_CURRENT_FILE)).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'No temp-current.svg to push' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Discard the staged working copy without touching current.svg.
+app.delete('/api/projects/:project/temp-current', async (req, res) => {
+  const dir = getProjectDir(req, res);
+  if (!dir) return;
+  try {
+    await fsp.unlink(path.join(dir, TEMP_CURRENT_FILE));
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'No temp-current.svg to discard' });
     res.status(500).json({ error: err.message });
   }
 });

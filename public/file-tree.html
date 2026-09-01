@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- File-tree view: a human-only page opened from index.html's File tree
+     button. Shows a scrollable, hierarchical "decompressed" outline of every
+     project's SVG (groups, paths, shapes) alongside a canvas of the selected
+     project's current.svg. Read-only view of the project — it never creates
+     folders or files, and is not an agent surface. -->
+<title>File tree — SVG Studio</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; color: #333; }
+  header { background: #fff; border-bottom: 1px solid #ddd; padding: .75rem 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 1.15rem; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  button { padding: .45rem .9rem; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: .875rem; }
+  button:hover { background: #0056b3; }
+  button.secondary { background: #6c757d; } button.secondary:hover { background: #5a6268; }
+  button.small { padding: .22rem .55rem; font-size: .72rem; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status-pill { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .85rem; border-radius: 999px; font-size: .8rem; }
+  .status-pill::before { content: ''; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
+  .status-pill.ok { background: #d1e7dd; color: #0f5132; }
+  .status-pill.down { background: #fff3cd; color: #664d03; }
+
+  main { display: flex; height: calc(100vh - 57px); }
+
+  /* ---------- tree sidebar ---------- */
+  .tree-panel { width: 340px; background: #fff; border-right: 1px solid #e5e5e5; display: flex; flex-direction: column; flex-shrink: 0; min-width: 0; }
+  .tree-head { padding: .6rem .9rem; border-bottom: 1px solid #eee; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: #888; display: flex; justify-content: space-between; align-items: center; }
+  .tree-scroll { flex: 1; overflow-y: auto; padding: .4rem 0 .6rem; }
+  .tree { list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8rem; }
+
+  .node { user-select: none; }
+  .node-row { display: flex; align-items: center; gap: .3rem; padding: .18rem .5rem; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+  .node-row:hover { background: #f0f4ff; }
+  .node-row.selected { background: #e7f1ff; color: #0366d6; }
+  .node-row.selected .node-label { font-weight: 600; }
+  .node-row.project-row { font-weight: 600; color: #444; }
+  .node-row.project-row .node-label { font-size: .85rem; }
+  .node-row.project-row.expanded { background: #f0f4ff; }
+  .node-row.current-row { color: #0366d6; }
+  .node-row.current-row .node-label { font-weight: 600; }
+  .node-row.group-row { color: #555; }
+  .node-row.leaf-row { color: #666; }
+  .node-row.version-row, .node-row.option-row { color: #777; font-size: .76rem; }
+  .node-row.version-row .node-label, .node-row.option-row .node-label { font-weight: 400; }
+
+  .twisty { width: 1rem; height: 1rem; display: inline-flex; align-items: center; justify-content: center; color: #999; font-size: .7rem; flex-shrink: 0; }
+  .twisty.leaf { visibility: hidden; }
+  .node-icon { flex-shrink: 0; font-size: .82rem; width: 1.1rem; text-align: center; }
+  .node-label { overflow: hidden; text-overflow: ellipsis; }
+  .node-meta { margin-left: auto; font-size: .68rem; color: #bbb; flex-shrink: 0; }
+  .node-children { list-style: none; padding-left: 1.15rem; }
+  .node-children.collapsed { display: none; }
+
+  /* Status dot: red = no id/comment (type fallback), yellow = comment-driven */
+  .dot-wrap { display: inline-flex; align-items: center; gap: .15rem; margin-left: .35rem; }
+  .status-dot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+  .status-dot.dot-red { background: #dc3545; }
+  .status-dot.dot-yellow { background: #ffc107; }
+  .status-dot.dot-none { background: #28a745; }
+  .dot-bang { font-size: .7rem; font-weight: 700; color: #ffc107; line-height: 1; }
+
+  .tree-empty { padding: 1rem .9rem; color: #aaa; font-size: .82rem; font-style: italic; }
+
+  /* ---------- canvas ---------- */
+  .viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .viewer-header { padding: .65rem 1rem; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; background: #fff; }
+  .viewer-title { font-size: .9rem; font-weight: 600; color: #444; display: flex; align-items: center; gap: .5rem; }
+  .viewer-title .proj { color: #0366d6; }
+  .viewer-title .file { color: #888; font-weight: 400; }
+  .viewer-content { flex: 1; display: flex; justify-content: flex-start; align-items: flex-start; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
+  .svg-host { max-width: 100%; width: fit-content; border: 1.33px solid #e0e0e0; border-radius: 4px; padding: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); background: #fff; }
+  .svg-host svg { display: block; max-width: 100%; }
+  .svg-host svg .ft-selected { outline: 2px solid #007bff; outline-offset: 2px; }
+  .placeholder { color: #999; text-align: center; max-width: 420px; line-height: 1.6; }
+  .info { padding: .55rem 1rem; border-top: 1px solid #eee; font-size: .78rem; color: #666; background: #fff; min-height: 2.1rem; }
+  .info code { background: #f0f0f0; padding: .05rem .3rem; border-radius: 3px; font-size: .74rem; }
+
+  .toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: .6rem 1.1rem; border-radius: 6px; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 10; }
+  .toast.show { opacity: .95; }
+
+  /* ---------- rename dialog ---------- */
+  dialog { margin: auto; border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; width: min(420px, 92vw); box-shadow: 0 8px 30px rgba(0,0,0,.18); color: #333; }
+  dialog::backdrop { background: rgba(0,0,0,.3); }
+  .dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
+  .dlg-head h3 { font-size: 1rem; }
+  .dlg-hint { font-size: .82rem; color: #666; margin-bottom: .6rem; line-height: 1.5; }
+  .dlg-field { display: flex; flex-direction: column; gap: .3rem; margin-bottom: .75rem; }
+  .dlg-field span { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: #888; }
+  .dlg-field input { padding: .5rem .6rem; border: 1px solid #ccc; border-radius: 4px; font-size: .85rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .dlg-field input:focus { outline: none; border-color: #007bff; box-shadow: 0 0 0 2px rgba(0,123,255,.15); }
+  .dlg-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .6rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>File tree</h1>
+  <div class="header-right">
+    <button id="pushBtn" class="small" style="display:none" title="Push the staged working copy into current.svg">Push to current</button>
+    <button id="discardBtn" class="small secondary" style="display:none" title="Discard staged changes">Discard</button>
+    <button id="backBtn" class="secondary" title="Back to SVG Studio">← Studio</button>
+    <span id="statusPill" class="status-pill down" title="Connection to the server">Connecting…</span>
+  </div>
+</header>
+<main>
+  <aside class="tree-panel">
+    <div class="tree-head">Projects <span id="treeCount"></span></div>
+    <div class="tree-scroll">
+      <ul class="tree" id="tree"></ul>
+      <div class="tree-empty" id="treeEmpty" style="display:none">No projects yet.</div>
+    </div>
+  </aside>
+  <section class="viewer">
+    <div class="viewer-header">
+      <div class="viewer-title" id="viewerTitle">No project selected</div>
+    </div>
+    <div class="viewer-content" id="viewerContent">
+      <div class="placeholder" id="placeholder">Select a project in the tree to view its current.svg.<br><br>
+        Expand a project to see its SVG "decompressed" into a hierarchy of groups and shapes.<br><br>
+        Click any element to highlight it on the canvas.</div>
+    </div>
+    <div class="info" id="info">Select an element to see its details.</div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<dialog id="renameDlg">
+  <div class="dlg-head">
+    <h3>Rename element</h3>
+    <button id="renameDlgCancel" class="small secondary">Close</button>
+  </div>
+  <p class="dlg-hint" id="renameDlgHint"></p>
+  <label class="dlg-field">
+    <span>id</span>
+    <input id="renameId" type="text" placeholder="kebab-case-name" spellcheck="false">
+  </label>
+  <label class="dlg-field">
+    <span>comment</span>
+    <input id="renameComment" type="text" placeholder="optional note shown in the tree" spellcheck="false">
+  </label>
+  <div class="dlg-actions">
+    <button id="renameDlgSave">Save</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const tree = $('tree'), treeEmpty = $('treeEmpty'), treeCount = $('treeCount'),
+      viewerContent = $('viewerContent'), viewerTitle = $('viewerTitle'),
+      placeholder = $('placeholder'), info = $('info'), statusPill = $('statusPill');
+
+const state = {
+  projects: [],            // [{name, current, versions, options}]
+  expandedProjects: {},    // name -> bool (one at a time)
+  expandedNodes: {},       // "project/current/path" -> bool
+  selected: null,          // {project, path, id, type}
+  viewing: null,           // {project, file} — what's on canvas
+  currentSvg: null,        // parsed DOM of current.svg for viewing project
+};
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res;
+}
+
+/* ---------- SVG → tree parser ----------
+   Parses an SVG string into a hierarchical node list. Label resolution:
+   1. id attribute
+   2. XML comment immediately preceding the element (truncated to 10 chars)
+   3. element type (path, circle, rect, …)
+
+   Each node also records:
+   - `source`: 'id' | 'comment' | 'type' — where its label came from
+   - `domPath`: array of child indices from the <svg> root, used to locate
+     the element in the DOM for selection highlighting (works even when the
+     element has no id). */
+function parseSvgTree(svgString) {
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  const root = doc.documentElement;
+  if (root.nodeName === 'parsererror') return [];
+
+  // Single-pass tokenizer over the raw source: walk comments and element
+  // opening tags in source order, pairing each comment with the element that
+  // follows it. DOMParser preserves source order, so the i-th element in the
+  // DOM walk corresponds to the i-th element token here.
+  const commentsByElementIndex = [];
+  const tokenRe = /<!--([\s\S]*?)-->|<([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+  let pendingComment = null;
+  let elementIndex = 0;
+  let tm;
+  while ((tm = tokenRe.exec(svgString)) !== null) {
+    if (tm[1] !== undefined) {
+      // A comment
+      pendingComment = tm[1].trim();
+    } else {
+      // An element opening tag
+      commentsByElementIndex[elementIndex] = pendingComment;
+      pendingComment = null;
+      elementIndex++;
+    }
+  }
+
+  // Walk the DOM, tracking child indices so we can build domPath and match
+  // comments by element order. domCounter starts at 1 because the tokenizer
+  // counts the <svg> root as element 0, but the walk begins at root.children.
+  // It increments for EVERY element (including defs and use) so it stays in
+  // sync with the tokenizer.
+  let domCounter = 1;
+  function walk(el, depth, path) {
+    const nodes = [];
+    let childIdx = 0; // counts ALL children (matches el.children[idx] in findElementByPath)
+    for (const child of el.children) {
+      const tag = child.nodeName;
+      const comment = commentsByElementIndex[domCounter] || null;
+      domCounter++;
+      const childPath = path.concat(childIdx);
+      childIdx++;
+      // Skip defs and use — they're not part of the visible hierarchy we
+      // want to show as editable parts. (Still counted above for sync.)
+      if (tag === 'defs' || tag === 'use') continue;
+      const id = child.getAttribute('id');
+      const hasChildren = child.children.length > 0;
+
+      let label, source;
+      if (id) {
+        label = id;
+        source = 'id';
+      } else if (comment) {
+        label = comment.slice(0, 10);
+        source = 'comment';
+      } else {
+        label = tag;
+        source = 'type';
+      }
+
+      const node = {
+        type: tag,
+        id: id || null,
+        label,
+        source,
+        hasComment: !!comment,
+        domPath: childPath,
+        children: hasChildren ? walk(child, depth + 1, childPath) : [],
+        pathData: !hasChildren ? (child.getAttribute('d') || child.getAttribute('cx') || child.getAttribute('r') || '') : null,
+      };
+      nodes.push(node);
+    }
+    return nodes;
+  }
+
+  return walk(root, 0, []);
+}
+
+/* ---------- tree rendering ---------- */
+
+function nodeKey(project, path) {
+  return project + '/' + path;
+}
+
+function isExpanded(project, path) {
+  return !!state.expandedNodes[nodeKey(project, path)];
+}
+
+function setExpanded(project, path, val) {
+  state.expandedNodes[nodeKey(project, path)] = val;
+}
+
+function renderTree() {
+  tree.innerHTML = '';
+  treeCount.textContent = state.projects.length ? `(${state.projects.length})` : '';
+  treeEmpty.style.display = state.projects.length ? 'none' : 'block';
+
+  for (const p of state.projects) {
+    const li = document.createElement('li');
+    li.className = 'node';
+
+    // Project root row
+    const row = document.createElement('div');
+    row.className = 'node-row project-row' + (state.expandedProjects[p.name] ? ' expanded' : '');
+    row.dataset.project = p.name;
+
+    const twisty = document.createElement('span');
+    twisty.className = 'twisty';
+    twisty.textContent = state.expandedProjects[p.name] ? '▾' : '▸';
+    const icon = document.createElement('span');
+    icon.className = 'node-icon';
+    icon.textContent = state.expandedProjects[p.name] ? '📂' : '📁';
+    const label = document.createElement('span');
+    label.className = 'node-label';
+    label.textContent = '/' + p.name;
+    const meta = document.createElement('span');
+    meta.className = 'node-meta';
+    meta.textContent = p.current ? '' : '·';
+
+    row.append(twisty, icon, label, meta);
+    row.addEventListener('click', () => toggleProject(p.name));
+    li.appendChild(row);
+
+    // Children container
+    const children = document.createElement('ul');
+    children.className = 'node-children' + (state.expandedProjects[p.name] ? '' : ' collapsed');
+
+    if (state.expandedProjects[p.name]) {
+      // current.svg node (renders the working copy: temp-current if staged,
+      // otherwise current.svg). A dirty marker shows when renames are staged.
+      const curLi = document.createElement('li');
+      curLi.className = 'node';
+      const curRow = document.createElement('div');
+      curRow.className = 'node-row current-row';
+      curRow.dataset.project = p.name;
+      curRow.dataset.file = 'current';
+      const curTwisty = document.createElement('span');
+      curTwisty.className = 'twisty';
+      const curIcon = document.createElement('span');
+      curIcon.className = 'node-icon';
+      curIcon.textContent = '🖼';
+      const curLabel = document.createElement('span');
+      curLabel.className = 'node-label';
+      curLabel.textContent = p.tempCurrent ? '//current (staged)' : '//current';
+      curRow.append(curTwisty, curIcon, curLabel);
+      curRow.addEventListener('click', () => selectFile(p.name, 'current'));
+      curLi.appendChild(curRow);
+
+      // current.svg children (the parsed tree of the working copy)
+      const working = p.tempCurrent || p.current;
+      if (working) {
+        const curChildren = document.createElement('ul');
+        curChildren.className = 'node-children';
+        const treeNodes = parseSvgTree(working);
+        for (let i = 0; i < treeNodes.length; i++) {
+          curChildren.appendChild(renderSvgNode(p.name, 'current', treeNodes[i], 0, 'current/' + i));
+        }
+        curLi.appendChild(curChildren);
+      }
+      children.appendChild(curLi);
+
+      // Versions
+      if (p.versions && p.versions.length) {
+        const verLi = document.createElement('li');
+        verLi.className = 'node';
+        const verRow = document.createElement('div');
+        verRow.className = 'node-row version-row';
+        verRow.dataset.project = p.name;
+        verRow.dataset.file = 'versions';
+        const verTwisty = document.createElement('span');
+        verTwisty.className = 'twisty';
+        verTwisty.textContent = '▾';
+        const verIcon = document.createElement('span');
+        verIcon.className = 'node-icon';
+        verIcon.textContent = '🗂';
+        const verLabel = document.createElement('span');
+        verLabel.className = 'node-label';
+        verLabel.textContent = '//versions';
+        verRow.append(verTwisty, verIcon, verLabel);
+        verLi.appendChild(verRow);
+        const verChildren = document.createElement('ul');
+        verChildren.className = 'node-children';
+        for (const v of p.versions) {
+          const vLi = document.createElement('li');
+          vLi.className = 'node';
+          const vRow = document.createElement('div');
+          vRow.className = 'node-row version-row';
+          vRow.dataset.project = p.name;
+          vRow.dataset.file = 'version';
+          vRow.dataset.id = v;
+          const vTwisty = document.createElement('span');
+          vTwisty.className = 'twisty leaf';
+          const vIcon = document.createElement('span');
+          vIcon.className = 'node-icon';
+          vIcon.textContent = '📄';
+          const vLabel = document.createElement('span');
+          vLabel.className = 'node-label';
+          vLabel.textContent = v.replace(/\.svg$/, '');
+          vRow.append(vTwisty, vIcon, vLabel);
+          vRow.addEventListener('click', () => selectFile(p.name, 'version', v));
+          vLi.appendChild(vRow);
+          verChildren.appendChild(vLi);
+        }
+        verLi.appendChild(verChildren);
+        children.appendChild(verLi);
+      }
+
+      // Options
+      if (p.options && p.options.length) {
+        const optLi = document.createElement('li');
+        optLi.className = 'node';
+        const optRow = document.createElement('div');
+        optRow.className = 'node-row option-row';
+        optRow.dataset.project = p.name;
+        optRow.dataset.file = 'options';
+        const optTwisty = document.createElement('span');
+        optTwisty.className = 'twisty';
+        optTwisty.textContent = '▾';
+        const optIcon = document.createElement('span');
+        optIcon.className = 'node-icon';
+        optIcon.textContent = '💡';
+        const optLabel = document.createElement('span');
+        optLabel.className = 'node-label';
+        optLabel.textContent = '//options';
+        optRow.append(optTwisty, optIcon, optLabel);
+        optLi.appendChild(optRow);
+        const optChildren = document.createElement('ul');
+        optChildren.className = 'node-children';
+        for (const o of p.options) {
+          const oLi = document.createElement('li');
+          oLi.className = 'node';
+          const oRow = document.createElement('div');
+          oRow.className = 'node-row option-row';
+          oRow.dataset.project = p.name;
+          oRow.dataset.file = 'option';
+          oRow.dataset.id = o;
+          const oTwisty = document.createElement('span');
+          oTwisty.className = 'twisty leaf';
+          const oIcon = document.createElement('span');
+          oIcon.className = 'node-icon';
+          oIcon.textContent = '✨';
+          const oLabel = document.createElement('span');
+          oLabel.className = 'node-label';
+          oLabel.textContent = o.replace(/\.svg$/, '');
+          oRow.append(oTwisty, oIcon, oLabel);
+          oRow.addEventListener('click', () => selectFile(p.name, 'option', o));
+          oLi.appendChild(oRow);
+          optChildren.appendChild(oLi);
+        }
+        optLi.appendChild(optChildren);
+        children.appendChild(optLi);
+      }
+    }
+
+    li.appendChild(children);
+    tree.appendChild(li);
+  }
+}
+
+function renderSvgNode(project, file, node, depth, path) {
+  const li = document.createElement('li');
+  li.className = 'node';
+  const row = document.createElement('div');
+  row.className = 'node-row ' + (node.children.length ? 'group-row' : 'leaf-row');
+  row.dataset.project = project;
+  row.dataset.file = file;
+  row.dataset.id = node.id || '';
+  row.dataset.type = node.type;
+  row.dataset.domPath = JSON.stringify(node.domPath);
+
+  const twisty = document.createElement('span');
+  twisty.className = 'twisty' + (node.children.length ? '' : ' leaf');
+  if (node.children.length) {
+    twisty.textContent = isExpanded(project, path) ? '▾' : '▸';
+  }
+  const icon = document.createElement('span');
+  icon.className = 'node-icon';
+  icon.textContent = node.children.length ? '📁' : '▸';
+  // Status dot: red = no id & no comment (falls back to type), yellow =
+  // comment-driven label, green = has a proper id. Clicking the dot opens the
+  // rename dialog. A trailing ! shows if the element has a comment.
+  const dotWrap = document.createElement('span');
+  dotWrap.className = 'dot-wrap';
+  dotWrap.style.cursor = 'pointer';
+  const dot = document.createElement('span');
+  dot.className = 'status-dot ' + (node.source === 'type' ? 'dot-red' : node.source === 'comment' ? 'dot-yellow' : 'dot-none');
+  dotWrap.appendChild(dot);
+  if (node.hasComment) {
+    const bang = document.createElement('span');
+    bang.className = 'dot-bang';
+    bang.textContent = '!';
+    dotWrap.appendChild(bang);
+  }
+  dotWrap.title = node.source === 'type'
+    ? 'No id or comment — labeled by element type. Click to rename.'
+    : node.source === 'comment'
+      ? 'Labeled by comment (first 10 chars). No id yet. Click to rename.'
+      : 'Has an id: ' + node.id + '. Click to rename.';
+  dotWrap.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openRenameDialog(project, node);
+  });
+  const label = document.createElement('span');
+  label.className = 'node-label';
+  label.textContent = node.label;
+  const meta = document.createElement('span');
+  meta.className = 'node-meta';
+  if (!node.children.length && node.pathData) {
+    meta.textContent = node.type;
+  }
+
+  row.append(twisty, icon, label, dotWrap, meta);
+
+  if (node.children.length) {
+    row.addEventListener('click', () => {
+      const key = nodeKey(project, path);
+      const nowExpanded = !state.expandedNodes[key];
+      state.expandedNodes[key] = nowExpanded;
+      renderTree();
+      // Keep the canvas selection if it was on this node
+      if (state.selected && state.selected.project === project && state.selected.domPath && JSON.stringify(state.selected.domPath) === JSON.stringify(node.domPath)) {
+        highlightOnCanvas(node.domPath);
+      }
+    });
+  } else {
+    row.addEventListener('click', () => selectElement(project, node));
+  }
+
+  li.appendChild(row);
+
+  if (node.children.length) {
+    const children = document.createElement('ul');
+    children.className = 'node-children' + (isExpanded(project, path) ? '' : ' collapsed');
+    for (let i = 0; i < node.children.length; i++) {
+      children.appendChild(renderSvgNode(project, file, node.children[i], depth + 1, path + '/' + i));
+    }
+    li.appendChild(children);
+  }
+
+  return li;
+}
+
+/* ---------- interactions ---------- */
+
+function toggleProject(name) {
+  // One project expanded at a time
+  const wasExpanded = !!state.expandedProjects[name];
+  state.expandedProjects = {};
+  if (!wasExpanded) state.expandedProjects[name] = true;
+  renderTree();
+  if (state.expandedProjects[name]) {
+    selectFile(name, 'current');
+  }
+}
+
+function selectFile(project, file, id) {
+  state.selected = null;
+  state.viewing = { project, file, id: id || null };
+  clearSelectionHighlight();
+  loadCanvas(project, file, id);
+  renderTree();
+}
+
+function selectElement(project, node) {
+  state.selected = { project, id: node.id, type: node.type, label: node.label, domPath: node.domPath, source: node.source };
+  state.viewing = { project, file: 'current' };
+  loadCanvas(project, 'current');
+  highlightOnCanvas(node.domPath);
+  renderTree();
+  updateInfo();
+}
+
+function updateInfo() {
+  // Show push/discard only when the viewing project has staged changes.
+  const viewingProject = state.viewing && state.viewing.project;
+  const staged = viewingProject && state.projects.find((p) => p.name === viewingProject)?.tempCurrent;
+  $('pushBtn').style.display = staged ? '' : 'none';
+  $('discardBtn').style.display = staged ? '' : 'none';
+
+  if (state.selected) {
+    const s = state.selected;
+    info.innerHTML = `Selected <code>${s.label}</code> — <code>&lt;${s.type}&gt;</code>` +
+      (s.id ? ` · id <code>${s.id}</code>` : ` · <em>no id</em>`) +
+      ` · project <code>${s.project}</code>`;
+  } else if (state.viewing) {
+    const v = state.viewing;
+    const fileLabel = v.file === 'current' ? 'current.svg' : v.id;
+    info.innerHTML = `Viewing <code>${v.project}/${fileLabel}</code>` +
+      (v.file === 'current' ? ' — click a dot to rename an element' : '');
+  } else {
+    info.textContent = 'Select an element to see its details.';
+  }
+}
+
+/* ---------- canvas ---------- */
+
+async function loadCanvas(project, file, id) {
+  let svgString;
+  let staged = false;
+  try {
+    if (file === 'current') {
+      // Prefer the staged working copy (temp-current) if one exists.
+      const tempRes = await fetch(`/api/projects/${encodeURIComponent(project)}/temp-current`);
+      if (tempRes.ok) {
+        svgString = await tempRes.text();
+        staged = true;
+      } else {
+        const res = await fetch(`/api/projects/${encodeURIComponent(project)}/current`);
+        if (!res.ok) throw new Error('no current');
+        svgString = await res.text();
+      }
+    } else if (file === 'version') {
+      const res = await fetch(`/api/projects/${encodeURIComponent(project)}/versions/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error('no version');
+      svgString = await res.text();
+    } else if (file === 'option') {
+      const res = await fetch(`/api/projects/${encodeURIComponent(project)}/options/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error('no option');
+      svgString = await res.text();
+    }
+  } catch (err) {
+    viewerContent.innerHTML = '';
+    viewerContent.appendChild(placeholder);
+    placeholder.style.display = 'block';
+    placeholder.textContent = `Could not load ${file}${id ? ' ' + id : ''}.`;
+    return;
+  }
+
+  placeholder.style.display = 'none';
+  viewerContent.innerHTML = '';
+
+  const host = document.createElement('div');
+  host.className = 'svg-host';
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = '<style>svg{max-width:100%;display:block}svg .ft-selected{outline:2px solid #007bff;outline-offset:2px}</style>' + svgString;
+  viewerContent.appendChild(host);
+
+  // Store the parsed DOM for selection highlighting
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  state.currentSvg = doc;
+
+  const fileLabel = file === 'current' ? (staged ? 'current.svg (staged)' : 'current.svg') : id;
+  viewerTitle.innerHTML = `<span class="proj">${project}</span> <span class="file">/ ${fileLabel}</span>`;
+
+  // Re-apply selection highlight if we're viewing current and have a selection
+  if (file === 'current' && state.selected && state.selected.project === project) {
+    highlightOnCanvas(state.selected.domPath || state.selected.id);
+  }
+}
+
+function clearSelectionHighlight() {
+  if (state.currentSvg) {
+    const els = state.currentSvg.querySelectorAll('.ft-selected');
+    els.forEach((el) => el.classList.remove('ft-selected'));
+  }
+  // Also clear in the rendered shadow DOM
+  const hosts = viewerContent.querySelectorAll('.svg-host');
+  hosts.forEach((h) => {
+    if (h.shadowRoot) {
+      h.shadowRoot.querySelectorAll('.ft-selected').forEach((el) => el.classList.remove('ft-selected'));
+    }
+  });
+}
+
+// Find an element in the parsed SVG DOM by its domPath (array of child
+// indices from the <svg> root). Falls back to getElementById when a path
+// isn't available. Returns null if not found.
+function findElementByPath(doc, domPath) {
+  if (!domPath || !domPath.length) return null;
+  let el = doc.documentElement;
+  for (const idx of domPath) {
+    if (!el || !el.children || idx >= el.children.length) return null;
+    el = el.children[idx];
+  }
+  return el;
+}
+
+function highlightOnCanvas(domPathOrId) {
+  if (!domPathOrId || !state.currentSvg) return;
+  clearSelectionHighlight();
+  let el = null;
+  if (Array.isArray(domPathOrId)) {
+    el = findElementByPath(state.currentSvg, domPathOrId);
+  } else {
+    el = state.currentSvg.getElementById(domPathOrId);
+  }
+  if (el) {
+    el.classList.add('ft-selected');
+    // Re-render the shadow DOM with the highlight
+    const host = viewerContent.querySelector('.svg-host');
+    if (host && host.shadowRoot) {
+      const svgString = new XMLSerializer().serializeToString(state.currentSvg);
+      host.shadowRoot.innerHTML = '<style>svg{max-width:100%;display:block}svg .ft-selected{outline:2px solid #007bff;outline-offset:2px}</style>' + svgString;
+    }
+  }
+}
+
+/* ---------- data loading & SSE ---------- */
+
+async function loadData() {
+  const data = await (await api('/api/file-tree')).json();
+  state.projects = data.projects;
+  renderTree();
+  updateInfo();
+  // If we have a viewing project, keep it; otherwise default to first
+  if (!state.viewing && state.projects.length) {
+    // Auto-expand the first project and show its current
+    state.expandedProjects[state.projects[0].name] = true;
+    selectFile(state.projects[0].name, 'current');
+  }
+}
+
+function connectSSE() {
+  const es = new EventSource('/api/events');
+  es.onopen = () => {
+    statusPill.className = 'status-pill ok';
+    statusPill.textContent = 'Live';
+  };
+  es.onerror = () => {
+    statusPill.className = 'status-pill down';
+    statusPill.textContent = 'Reconnecting…';
+  };
+  const refresh = () => {
+    loadData().catch(() => {});
+  };
+  es.addEventListener('projects-changed', refresh);
+  es.addEventListener('current-changed', refresh);
+  es.addEventListener('versions-changed', refresh);
+  es.addEventListener('options-changed', refresh);
+  es.addEventListener('focus-changed', refresh);
+}
+
+/* ---------- rename dialog ---------- */
+
+const renameDlg = $('renameDlg'), renameId = $('renameId'), renameComment = $('renameComment'),
+      renameDlgHint = $('renameDlgHint');
+let renameTarget = null; // {project, node}
+
+// Find the element in the parsed SVG DOM by domPath.
+function findElementByDomPath(doc, domPath) {
+  if (!domPath || !domPath.length) return null;
+  let el = doc.documentElement;
+  for (const idx of domPath) {
+    if (!el || !el.children || idx >= el.children.length) return null;
+    el = el.children[idx];
+  }
+  return el;
+}
+
+// Find the comment node immediately preceding `el` in the DOM, skipping over
+// whitespace-only text nodes. Returns null if there is no such comment.
+function findPrecedingComment(doc, el) {
+  let sib = el.previousSibling;
+  while (sib) {
+    if (sib.nodeType === Node.COMMENT_NODE) return sib;
+    if (sib.nodeType === Node.TEXT_NODE && sib.data.trim() === '') {
+      sib = sib.previousSibling;
+      continue;
+    }
+    return null; // a non-whitespace node sits between us and any comment
+  }
+  return null;
+}
+
+// Reorder an element's attributes so `id` comes first, preserving the relative
+// order of the rest. setAttribute appends to the end, so re-adding an id via
+// the dialog would otherwise land it last (e.g. `<g ... id="fish">`). This
+// keeps the canonical `<g id="fish" ...>` form.
+function moveIdFirst(el) {
+  if (!el.attributes || !el.attributes.length) return;
+  const attrs = [];
+  for (const a of el.attributes) attrs.push([a.name, a.value]);
+  while (el.attributes.length) el.removeAttribute(el.attributes[0].name);
+  const idAttr = attrs.find(([n]) => n === 'id');
+  if (idAttr) {
+    el.setAttribute(idAttr[0], idAttr[1]);
+    attrs.splice(attrs.indexOf(idAttr), 1);
+  }
+  for (const [n, v] of attrs) el.setAttribute(n, v);
+}
+
+// Tokenize the raw SVG source into a list of {comment, tag, tagStart} where
+// tagStart is the char offset of the element's opening tag and comment is the
+// comment (if any) immediately preceding it. Returns the element at the given
+// flat index.
+function tokenizeSvg(svgString) {
+  const tokens = [];
+  const tokenRe = /<!--([\s\S]*?)-->|<([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+  let pendingComment = null;
+  let tm;
+  while ((tm = tokenRe.exec(svgString)) !== null) {
+    if (tm[1] !== undefined) {
+      pendingComment = tm[1].trim();
+    } else {
+      tokens.push({
+        name: tm[2],
+        attrs: tm[3],
+        comment: pendingComment,
+        tagStart: tm.index
+      });
+      pendingComment = null;
+    }
+  }
+  return tokens;
+}
+
+// Map a domPath (child indices from root) to a flat element index in the
+// tokenizer's element list. The root <svg> is element 0; each child index
+// advances through the source order. We approximate by walking the DOM.
+function domPathToFlatIndex(svgString, domPath) {
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  // Walk the DOM counting elements in source order (same as tokenizer).
+  let counter = 0;
+  let target = -1;
+  function walk(el, depth, path) {
+    for (const child of el.children) {
+      const childPath = path.concat(counter);
+      // counter here is the child index within el; but we need the flat
+      // element index. We track a global element counter.
+    }
+  }
+  // Simpler: count elements up to the target using the tokenizer and the
+  // domPath. Since domPath gives child indices, and the tokenizer lists
+  // elements in source order, we can compute the flat index by walking the
+  // DOM and counting every element (including defs/use) until we reach the
+  // target path.
+  let flat = 0;
+  let found = -1;
+  (function walk(el, path) {
+    if (found !== -1) return;
+    for (let i = 0; i < el.children.length; i++) {
+      const child = el.children[i];
+      const childPath = path.concat(i);
+      flat++; // this child is element `flat` in source order
+      if (childPath.length === domPath.length && childPath.every((v, k) => v === domPath[k])) {
+        found = flat;
+        return;
+      }
+      walk(child, childPath);
+    }
+  })(doc.documentElement, []);
+  return found;
+}
+
+function openRenameDialog(project, node) {
+  renameTarget = { project, node };
+  // Read the working copy (temp-current if staged, else current.svg).
+  fetch(`/api/projects/${encodeURIComponent(project)}/temp-current`)
+    .then((res) => res.ok ? res.text() : fetch(`/api/projects/${encodeURIComponent(project)}/current`).then((r) => r.text()))
+    .then((svgString) => {
+      const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+      const el = findElementByDomPath(doc, node.domPath);
+      if (!el) {
+        toast('Could not locate element in current.svg');
+        return;
+      }
+      renameId.value = el.getAttribute('id') || '';
+      // Find the comment preceding this element.
+      const flat = domPathToFlatIndex(svgString, node.domPath);
+      const tokens = tokenizeSvg(svgString);
+      const tok = tokens[flat];
+      renameComment.value = (tok && tok.comment) || '';
+      renameDlgHint.textContent = `Element <${node.type}> in project "${project}"`;
+      renameDlg.showModal();
+      renameId.focus();
+    })
+    .catch((err) => toast('Failed to load: ' + err.message));
+}
+
+function saveRename() {
+  if (!renameTarget) return;
+  const { project, node } = renameTarget;
+  const newId = renameId.value.trim();
+  const newComment = renameComment.value.trim();
+
+  fetch(`/api/projects/${encodeURIComponent(project)}/temp-current`)
+    .then((res) => res.ok ? res.text() : fetch(`/api/projects/${encodeURIComponent(project)}/current`).then((r) => r.text()))
+    .then((svgString) => {
+      const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+      const el = findElementByDomPath(doc, node.domPath);
+      if (!el) {
+        toast('Could not locate element in current.svg');
+        return;
+      }
+
+      // Uniqueness check on id (skip if unchanged)
+      const oldId = el.getAttribute('id');
+      if (newId && newId !== oldId) {
+        const existing = doc.getElementById(newId);
+        if (existing && existing !== el) {
+          toast(`id "${newId}" already exists in this drawing`);
+          return;
+        }
+      }
+
+      // Apply id to the DOM element.
+      if (newId) {
+        el.setAttribute('id', newId);
+        moveIdFirst(el); // keep id first in the opening tag (canonical form)
+      } else {
+        el.removeAttribute('id');
+      }
+
+      // Update the comment node directly in the DOM (no string surgery on the
+      // serialized output, which is what corrupted the file before).
+      const commentNode = findPrecedingComment(doc, el);
+      if (newComment) {
+        if (commentNode) {
+          commentNode.data = ` ${newComment} `;
+        } else {
+          el.parentNode.insertBefore(doc.createComment(` ${newComment} `), el);
+        }
+      } else if (commentNode) {
+        commentNode.parentNode.removeChild(commentNode);
+      }
+
+      const out = new XMLSerializer().serializeToString(doc);
+
+      return api(`/api/projects/${encodeURIComponent(project)}/temp-current`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/svg+xml' },
+        body: out
+      });
+    })
+    .then(() => {
+      toast('Saved to working copy — push to apply to current.svg');
+      renameDlg.close();
+      loadData().catch(() => {});
+    })
+    .catch((err) => toast('Save failed: ' + err.message));
+}
+
+$('renameDlgSave').addEventListener('click', saveRename);
+$('renameDlgCancel').addEventListener('click', () => renameDlg.close());
+renameDlg.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveRename();
+  if (e.key === 'Escape') renameDlg.close();
+});
+
+/* ---------- push / discard staged working copy ---------- */
+
+function stagedProject() {
+  return state.viewing && state.viewing.project;
+}
+
+$('pushBtn').addEventListener('click', async () => {
+  const project = stagedProject();
+  if (!project) return;
+  try {
+    await api(`/api/projects/${encodeURIComponent(project)}/temp-current/push`, { method: 'POST' });
+    toast('Pushed to current.svg');
+    await loadData();
+    if (state.viewing && state.viewing.project === project) {
+      await loadCanvas(project, 'current');
+    }
+  } catch (err) {
+    toast('Push failed: ' + err.message);
+  }
+});
+
+$('discardBtn').addEventListener('click', async () => {
+  const project = stagedProject();
+  if (!project) return;
+  if (!confirm('Discard staged changes to this project?')) return;
+  try {
+    await api(`/api/projects/${encodeURIComponent(project)}/temp-current`, { method: 'DELETE' });
+    toast('Discarded staged changes');
+    await loadData();
+    if (state.viewing && state.viewing.project === project) {
+      await loadCanvas(project, 'current');
+    }
+  } catch (err) {
+    toast('Discard failed: ' + err.message);
+  }
+});
+
+/* ---------- init ---------- */
+
+$('backBtn').addEventListener('click', () => {
+  window.location.href = '/';
+});
+
+loadData().catch((err) => {
+  toast('Failed to load: ' + err.message);
+});
+connectSSE();
+</script>
+</body>
+</html>
