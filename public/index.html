@@ -459,7 +459,7 @@ function renderSvg(svgText, title) {
   toggles.className = 'viewbox-toggles';
   toggles.append(frameToggle, vbToggle);
 
-  frame.append(toggles, host, currentSvgName);
+  frame.append(currentSvgName, host, toggles);
   viewerContent.innerHTML = '';
   viewerContent.appendChild(frame);
   setNameArea(title, state.viewingVersion);
