@@ -93,7 +93,6 @@
   #codeEditor { flex: 1; display: flex; flex-direction: column; background: #fff; min-height: 0; }
   #codeEditor.hidden { display: none; }
   .code-toolbar { display: flex; gap: .5rem; align-items: center; padding: .45rem 1rem; border-bottom: 1px solid #eee; font-size: .8rem; color: #666; }
-  .code-toolbar span { flex: 1; }
   #codeArea { flex: 1; width: 100%; border: none; outline: none; resize: none; padding: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; line-height: 1.5; color: #24292f; background: #fafbfc; tab-size: 2; }
   .toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: .6rem 1.1rem; border-radius: 6px; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 10; }
   .toast.show { opacity: .95; }
@@ -127,8 +126,8 @@
   <section class="viewer">
     <div class="viewer-header">
       <div class="commit-row">
-        <input id="commitLabel" placeholder="version label (e.g. thicker strokes)">
-        <button id="commitBtn" disabled>Commit</button>
+        <input id="commitLabel" placeholder="name--'1 word' description">
+        <button id="commitBtn" disabled>Commit to History</button>
         <button id="codeBtn" class="secondary" disabled title="View and edit the raw SVG source">&lt;/&gt; Code</button>
       </div>
     </div>
@@ -294,6 +293,7 @@ function renderEmpty() {
 }
 
 async function selectProject(name) {
+  if (navBlocked()) return;
   state.project = name;
   state.viewingVersion = null;
   // Undo availability is per-project; pick it up from the last projects list
@@ -560,6 +560,7 @@ async function loadOptions() {
 }
 
 async function previewOption(id) {
+  if (navBlocked()) return;
   try {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/options/${encodeURIComponent(id)}`);
     state.viewingVersion = null;
@@ -651,6 +652,7 @@ batchBar.register({
   title: 'Delete the selected committed versions and dismiss the selected options',
   className: 'danger',
   run: async () => {
+    if (navBlocked()) return;
     if (!state.project) return;
     const versionIds = selection.idsIn(versionList);
     const optionIds = selection.idsIn(optionList);
@@ -713,6 +715,7 @@ batchBar.register({
   title: 'Open a side-by-side comparison of current.svg with the selected options and versions',
   className: 'secondary',
   run: () => {
+    if (navBlocked()) return;
     if (!state.project) { toast('Select a project first'); return; }
     const versionIds = selection.idsIn(versionList);
     const optionIds = selection.idsIn(optionList);
@@ -765,7 +768,7 @@ async function loadVersions() {
       ren.addEventListener('click', (e) => {
         e.stopPropagation();
         const currentLabel = v.id.replace(/^v\d+-/, '').replace(/\.svg$/, '');
-        const label = prompt(`New label for ${v.id.replace(/\.svg$/, '')}:`, currentLabel);
+        const label = prompt(`New label for ${v.id.replace(/\.svg$/, '')} (name--'1 word' description):`, currentLabel);
         if (!label || !label.trim() || label.trim() === currentLabel) return;
         renameVersion(v.id, label.trim());
       });
@@ -783,6 +786,7 @@ async function loadVersions() {
 }
 
 async function viewVersion(id) {
+  if (navBlocked()) return;
   setCodeMode(false);
   try {
     const res = await api(`/api/projects/${encodeURIComponent(state.project)}/versions/${encodeURIComponent(id)}`);
@@ -955,6 +959,16 @@ function setCodeMode(on) {
   svgInfo.style.display = on ? 'none' : '';
 }
 
+// While the code editor is open, sidebar navigation would silently discard
+// unsaved edits. Block it and tell the user to save or cancel first.
+function navBlocked() {
+  if (state.codeMode) {
+    toast('Save or cancel the code editor first');
+    return true;
+  }
+  return false;
+}
+
 $('codeBtn').addEventListener('click', async () => {
   if (!state.project) return;
   if (state.viewingVersion) { toast('Go back to current before editing source'); return; }
@@ -967,6 +981,7 @@ $('codeBtn').addEventListener('click', async () => {
     isNew = false;
   } catch {} // no current.svg yet — start from an empty editor
   $('codeArea').value = text;
+  state.codeOriginal = text;
   $('codeHint').textContent = isNew
     ? `New ${state.project}/current.svg — paste or type SVG source, then Save`
     : `Editing ${state.project}/current.svg — plain SVG source`;
@@ -975,6 +990,9 @@ $('codeBtn').addEventListener('click', async () => {
 });
 
 $('codeCancelBtn').addEventListener('click', () => {
+  if ($('codeArea').value !== state.codeOriginal) {
+    if (!confirm('Discard unsaved changes?')) return;
+  }
   setCodeMode(false);
   loadCurrent();
 });
