@@ -22,6 +22,14 @@ npm test      # spawns its own server on a free port — no setup
   Before closing it signals its opener via `window.opener.multiViewResult(project,
   result)` (`'apply-keep'` or `'apply-focus'`); `index.html` only moves focus on
   `'apply-focus'`.
+- `public/file-tree.html` is a third, human-only page opened from `index.html`'s
+  **File tree** button. It "decompresses" each project's SVG into a hierarchical
+  outline beside a canvas, and is also a pure client-side view. It reads via the
+  existing API (`GET /api/file-tree`) and stages edits into a `temp-current` buffer
+  (`PUT …/temp-current`), applying them only on an explicit **Push to current**
+  (`POST …/temp-current/push`, which captures an undo slot) or discarding them
+  (`DELETE …/temp-current`). It never writes `current.svg` directly and is not an
+  agent surface.
 - Change detection: the server diffs file mtimes every 800 ms and pushes SSE hints
   on `/api/events`. The browser re-fetches on each hint and fully resyncs whenever
   its connection (re)opens. Any writer — the UI, file tools, HTTP — shows up the

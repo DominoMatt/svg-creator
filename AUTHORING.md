@@ -12,8 +12,7 @@ the markup. Structure the drawing so that it does.
 ```svg
 <svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 160 240">
   <!-- fish: drawn facing left around the center of its body (0,0); the transform stands it upright -->
-  <g id="fish" transform="translate(80 105) rotate(90)"
-     fill="#ffffff" stroke="#000000" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+  <g id="fish" transform="translate(80 105) rotate(90)" fill="#ffffff" stroke="#000000" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
     <!-- fins come first so the body paints over their roots -->
     <path id="tail" d="M 52 -16 L 104 -48 C 96 -26 96 26 104 48 L 52 16 Z"/>
     <!-- dorsal-fin and belly-fin are near-mirrors but stay separate: they get reshaped independently -->
