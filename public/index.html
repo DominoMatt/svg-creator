@@ -79,9 +79,13 @@
   .commit-row button { display: inline-flex; align-items: center; justify-content: center; height: 2rem; padding-left: .55rem; padding-right: .55rem; }
   .commit-row input { padding: .4rem .6rem; border: 1px solid #ccc; border-radius: 4px; width: 210px; }
   .canvas-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
-  .viewer-content { flex: 1; display: flex; justify-content: center; align-items: center; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
+  .viewer-content { flex: 1; display: flex; justify-content: flex-start; align-items: flex-start; padding: 2rem; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; overflow: auto; }
   .svg-frame { display: flex; flex-direction: column; gap: .45rem; max-width: 100%; }
-  .svg-host { max-width: 100%; }
+  .svg-host { max-width: 100%; width: fit-content; border: 1.33px solid #e0e0e0; border-radius: 4px; padding: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .svg-host.no-box { border-color: transparent; box-shadow: none; }
+  .viewbox-toggle { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; color: #666; cursor: pointer; user-select: none; align-self: flex-start; }
+  .viewbox-toggle input { accent-color: #007bff; cursor: pointer; }
+  .viewbox-toggles { display: flex; gap: 1rem; align-self: flex-start; }
   .placeholder { color: #999; text-align: center; max-width: 420px; line-height: 1.6; }
   .target-placeholder-btn { margin-top: .75rem; padding: .45rem .9rem; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: .875rem; }
   .target-placeholder-btn:hover { background: #0056b3; }
@@ -170,7 +174,7 @@ const projectList = $('projectList'), versionList = $('versionList'),
       svgInfo = $('svgInfo'), commitBtn = $('commitBtn'),
       commitLabel = $('commitLabel');
 
-const state = { project: null, viewingVersion: null, target: null, codeMode: false, hasOldCurrent: false, undoCooldown: false, hasOldCurrentByProject: {} };
+const state = { project: null, viewingVersion: null, target: null, codeMode: false, hasOldCurrent: false, undoCooldown: false, hasOldCurrentByProject: {}, showFrame: true, showViewBox: true };
 
 function toast(msg) {
   const t = $('toast');
@@ -397,13 +401,68 @@ function renderSvg(svgText, title) {
   // resolve within the shadow tree.
   const host = document.createElement('div');
   host.className = 'svg-host';
+  if (!state.showFrame) host.classList.add('no-box');
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = SVG_HOST_STYLE + svgText;
-  frame.append(host, currentSvgName);
+  const svg = root.querySelector('svg');
+
+  // viewBox indicator: a dashed rect drawn in the SVG's own coordinate system,
+  // so it maps exactly onto the viewBox rectangle regardless of scaling.
+  // Created whenever the SVG has a viewBox (independent of the toggle state),
+  // so the toggle isn't wrongly disabled when the box is unchecked.
+  let vbRect = null;
+  if (svg) {
+    const vb = svg.getAttribute('viewBox');
+    if (vb) {
+      const [minX, minY, vbW, vbH] = vb.trim().split(/[\s,]+/).map(Number);
+      if ([minX, minY, vbW, vbH].every(Number.isFinite)) {
+        vbRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        vbRect.setAttribute('x', minX);
+        vbRect.setAttribute('y', minY);
+        vbRect.setAttribute('width', vbW);
+        vbRect.setAttribute('height', vbH);
+        vbRect.setAttribute('fill', 'none');
+        vbRect.setAttribute('stroke', '#007bff');
+        vbRect.setAttribute('stroke-width', '1.5');
+        vbRect.setAttribute('stroke-dasharray', '4 3');
+        vbRect.setAttribute('vector-effect', 'non-scaling-stroke');
+        vbRect.style.display = state.showViewBox ? '' : 'none';
+        svg.appendChild(vbRect);
+      }
+    }
+  }
+
+  const frameToggle = document.createElement('label');
+  frameToggle.className = 'viewbox-toggle';
+  const frameCb = document.createElement('input');
+  frameCb.type = 'checkbox';
+  frameCb.checked = !!state.showFrame;
+  frameCb.addEventListener('change', () => {
+    state.showFrame = frameCb.checked;
+    host.classList.toggle('no-box', !frameCb.checked);
+  });
+  frameToggle.append(frameCb, document.createTextNode('frame'));
+
+  const vbToggle = document.createElement('label');
+  vbToggle.className = 'viewbox-toggle';
+  const vbCb = document.createElement('input');
+  vbCb.type = 'checkbox';
+  vbCb.checked = !!state.showViewBox;
+  vbCb.disabled = !vbRect;
+  vbCb.addEventListener('change', () => {
+    state.showViewBox = vbCb.checked;
+    if (vbRect) vbRect.style.display = vbCb.checked ? '' : 'none';
+  });
+  vbToggle.append(vbCb, document.createTextNode('viewBox'));
+
+  const toggles = document.createElement('div');
+  toggles.className = 'viewbox-toggles';
+  toggles.append(frameToggle, vbToggle);
+
+  frame.append(toggles, host, currentSvgName);
   viewerContent.innerHTML = '';
   viewerContent.appendChild(frame);
   setNameArea(title, state.viewingVersion);
-  const svg = root.querySelector('svg');
   if (svg) {
     const w = svg.getAttribute('width') || 'auto';
     const h = svg.getAttribute('height') || 'auto';
