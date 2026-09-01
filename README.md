@@ -52,6 +52,12 @@ up to date whenever you look.
   by side, promote ("Use") or ✓ commit straight from the tray, dismiss one or all.
   New proposals append to the tray until you clear them (✕ / Dismiss all, or ask the
   agent); committed options stay marked ✓
+- **Multi-view** — check any options/versions and click **Multi-view** in the History
+  bar to open a side-by-side comparison page (`multi-view.html`): `current.svg` (live)
+  plus each selected item. Promote any panel into a `new-current.svg` buffer, then
+  **Close & apply** overwrites the project's `current.svg` (with confirmation), or
+  **Discard** closes without changing anything. A human-only view — it never writes
+  files until you confirm
 - **Raw source editor** — `</>` Code toggles editable SVG source; Save (or Ctrl/Cmd+S)
   writes it back and the rendered view refreshes. Works on empty projects too: paste SVG
   source into a brand-new project and Save creates `current.svg`. Live updates pause

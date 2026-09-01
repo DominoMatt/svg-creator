@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Multi-view port: a human-only comparison view opened from index.html.
+     Shows current.svg (live) plus a chosen set of options and history
+     snapshots side by side. Any panel can be promoted into a new-current.svg
+     working buffer, which is applied back to the project's current.svg on
+     "Close & apply" (with confirmation). This page is a view of the project —
+     it never creates folders or files, and it is not an agent surface. -->
+<title>Multi-view — SVG Studio</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; color: #333; }
+  header { background: #fff; border-bottom: 1px solid #ddd; padding: .75rem 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 1.15rem; }
+  .project-name { font-size: .9rem; color: #555; background: #f0f4ff; border: 1px solid #d6e4ff; border-radius: 4px; padding: .2rem .6rem; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  button { padding: .45rem .9rem; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: .875rem; }
+  button:hover { background: #0056b3; }
+  button.secondary { background: #6c757d; } button.secondary:hover { background: #5a6268; }
+  button.danger { background: #dc3545; } button.danger:hover { background: #a71d2a; }
+  button.small { padding: .22rem .55rem; font-size: .72rem; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status-pill { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .85rem; border-radius: 999px; font-size: .8rem; }
+  .status-pill::before { content: ''; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
+  .status-pill.ok { background: #d1e7dd; color: #0f5132; }
+  .status-pill.down { background: #fff3cd; color: #664d03; }
+  .hint { font-size: .82rem; color: #666; padding: .5rem 1.5rem; background: #fff; border-bottom: 1px solid #eee; }
+  main { padding: 1.25rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; align-items: start; }
+  .panel { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .panel.buffer { border: 2px solid #007bff; box-shadow: 0 4px 16px rgba(0,123,255,.18); }
+  .panel-head { padding: .5rem .75rem; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; background: #fafbfc; }
+  .panel.buffer .panel-head { background: #e7f1ff; }
+  .panel-title { font-size: .8rem; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-badge { font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #084298; background: #cfe2ff; border: 1px solid #9ec5fe; border-radius: 3px; padding: .06rem .35rem; white-space: nowrap; }
+  .panel-badge.live { color: #0f5132; background: #d1e7dd; border-color: #a3cfbb; }
+  .panel-badge.missing { color: #664d03; background: #fff3cd; border-color: #ffe69c; }
+  .panel-actions { margin-left: auto; display: flex; gap: .35rem; align-items: center; }
+  .panel-body { padding: .75rem; display: flex; justify-content: center; align-items: center; min-height: 180px; background: repeating-conic-gradient(#f8f8f8 0% 25%, #fff 0% 50%) 50% / 24px 24px; }
+  .svg-host { max-width: 100%; }
+  .placeholder { color: #999; text-align: center; max-width: 260px; line-height: 1.6; font-size: .85rem; }
+  .panel-meta { padding: .4rem .75rem; border-top: 1px solid #eee; font-size: .72rem; color: #666; background: #fff; }
+  dialog { margin: auto; border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; width: min(520px, 92vw); box-shadow: 0 8px 30px rgba(0,0,0,.18); color: #333; }
+  dialog::backdrop { background: rgba(0,0,0,.3); }
+  .dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
+  .dlg-head h3 { font-size: 1rem; }
+  .dlg-hint { font-size: .82rem; color: #666; margin-bottom: .6rem; line-height: 1.5; }
+  .dlg-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .6rem; }
+  .toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: .6rem 1.1rem; border-radius: 6px; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 10; }
+  .toast.show { opacity: .95; }
+  .error-banner { margin: 1.25rem; padding: 1rem 1.25rem; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 8px; color: #664d03; font-size: .9rem; line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Multi-view</h1>
+  <span class="project-name" id="projectName">…</span>
+  <div class="header-right">
+    <button id="discardBtn" class="secondary" title="Close without changing current.svg">Discard</button>
+    <button id="applyBtn" title="Apply new-current.svg to the project's current.svg">Close &amp; apply</button>
+    <span id="statusPill" class="status-pill down" title="Connection to the server">Connecting…</span>
+  </div>
+</header>
+<div class="hint" id="hint">Loading…</div>
+<main>
+  <div class="grid" id="grid"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<dialog id="applyDlg">
+  <div class="dlg-head">
+    <h3>Apply new-current.svg?</h3>
+    <button id="applyDlgCancel" class="small secondary">Cancel</button>
+  </div>
+  <p class="dlg-hint" id="applyDlgText"></p>
+  <div class="dlg-actions">
+    <button id="applyDlgConfirm" class="danger">Overwrite current.svg</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+/* ---------- tiny helpers (mirrors index.html) ---------- */
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res;
+}
+
+// The drawing's own styles for each panel — inside the shadow root, because
+// page CSS can't reach in there (same isolation as index.html).
+const SVG_HOST_STYLE = '<style>svg{max-width:100%;filter:drop-shadow(0 2px 6px rgba(0,0,0,.12))}</style>';
+
+/* ---------- URL parsing ---------- */
+
+const params = new URLSearchParams(location.search);
+const project = params.get('project');
+const versionIds = params.getAll('v');
+const optionIds = params.getAll('o');
+
+// Same id shapes the server accepts.
+const VERSION_ID_RE = /^v\d{3}-[a-zA-Z0-9_-]+\.svg$/;
+const OPTION_ID_RE = /^option-[a-z]{1,2}-[a-zA-Z0-9_-]+\.svg$/;
+const validVersions = versionIds.filter((id) => VERSION_ID_RE.test(id));
+const validOptions = optionIds.filter((id) => OPTION_ID_RE.test(id));
+
+/* ---------- state ---------- */
+
+// Each panel: { kind: 'current'|'buffer'|'version'|'option', id, title, svg, missing }
+const panels = [];
+let bufferSvg = null;      // the new-current.svg working buffer
+let bufferSource = null;   // title of the panel the buffer currently came from
+let currentSvg = null;     // latest fetched current.svg
+
+/* ---------- rendering ---------- */
+
+function panelEl(panel) {
+  const el = document.createElement('div');
+  el.className = 'panel' + (panel.kind === 'buffer' ? ' buffer' : '');
+  const head = document.createElement('div');
+  head.className = 'panel-head';
+  const title = document.createElement('span');
+  title.className = 'panel-title';
+  title.textContent = panel.title;
+  title.title = panel.title;
+  head.append(title);
+
+  if (panel.kind === 'current') {
+    const badge = document.createElement('span');
+    badge.className = 'panel-badge live';
+    badge.textContent = 'live';
+    badge.title = 'This is the project current.svg — updates in real time';
+    head.append(badge);
+  } else if (panel.kind === 'buffer') {
+    const badge = document.createElement('span');
+    badge.className = 'panel-badge';
+    badge.textContent = 'will be applied on close';
+    badge.title = 'This buffer overwrites current.svg when you click "Close & apply"';
+    head.append(badge);
+  }
+
+  const actions = document.createElement('span');
+  actions.className = 'panel-actions';
+  if (panel.kind !== 'buffer') {
+    const promote = document.createElement('button');
+    promote.className = 'small';
+    promote.textContent = 'Promote →';
+    promote.title = `Copy ${panel.title} into new-current.svg`;
+    promote.disabled = panel.missing;
+    promote.addEventListener('click', () => promoteToBuffer(panel));
+    actions.append(promote);
+  }
+  head.append(actions);
+
+  const body = document.createElement('div');
+  body.className = 'panel-body';
+  if (panel.missing) {
+    const p = document.createElement('div');
+    p.className = 'placeholder';
+    p.textContent = 'Missing — this file was removed while the page was open.';
+    body.append(p);
+  } else {
+    const host = document.createElement('div');
+    host.className = 'svg-host';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = SVG_HOST_STYLE + panel.svg;
+    body.append(host);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'panel-meta';
+  meta.textContent = panel.meta || '';
+  if (panel.kind === 'buffer' && bufferSource) {
+    meta.textContent = `Source: ${bufferSource}`;
+  }
+
+  el.append(head, body, meta);
+  return el;
+}
+
+function renderAll() {
+  const grid = $('grid');
+  grid.innerHTML = '';
+  for (const p of panels) grid.appendChild(panelEl(p));
+}
+
+function svgDims(svgText) {
+  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+  const svg = doc.querySelector('svg');
+  if (!svg) return '';
+  const w = svg.getAttribute('width') || 'auto';
+  const h = svg.getAttribute('height') || 'auto';
+  const vb = svg.getAttribute('viewBox') || 'none';
+  return `Dimensions: ${w} × ${h} | viewBox: ${vb}`;
+}
+
+/* ---------- buffer ---------- */
+
+function promoteToBuffer(panel) {
+  if (panel.missing || !panel.svg) return;
+  bufferSvg = panel.svg;
+  bufferSource = panel.title;
+  // Update the buffer panel in place (it's always present).
+  const buf = panels.find((p) => p.kind === 'buffer');
+  if (buf) {
+    buf.svg = bufferSvg;
+    buf.missing = false;
+  }
+  renderAll();
+  toast(`Promoted ${panel.title} → new-current.svg`);
+}
+
+/* ---------- data loading ---------- */
+
+async function fetchSvg(path) {
+  const res = await api(path);
+  return await res.text();
+}
+
+async function load() {
+  const p = encodeURIComponent(project);
+  const hint = $('hint');
+
+  // current.svg (may not exist yet)
+  let currentMissing = false;
+  try {
+    currentSvg = await fetchSvg(`/api/projects/${p}/current`);
+  } catch {
+    currentMissing = true;
+  }
+  panels.push({
+    kind: 'current',
+    id: 'current.svg',
+    title: 'current.svg',
+    svg: currentSvg,
+    missing: currentMissing,
+    meta: currentMissing ? 'No current.svg yet' : svgDims(currentSvg)
+  });
+
+  // new-current.svg buffer — starts as a copy of current.svg
+  bufferSvg = currentSvg;
+  bufferSource = currentMissing ? null : 'current.svg';
+  panels.push({
+    kind: 'buffer',
+    id: 'new-current.svg',
+    title: 'new-current.svg',
+    svg: bufferSvg,
+    missing: currentMissing,
+    meta: currentMissing ? 'No current.svg yet — nothing to apply' : 'Starts as a copy of current.svg'
+  });
+
+  // selected versions
+  for (const id of validVersions) {
+    let svg, missing = false;
+    try {
+      svg = await fetchSvg(`/api/projects/${p}/versions/${encodeURIComponent(id)}`);
+    } catch {
+      missing = true;
+    }
+    panels.push({
+      kind: 'version',
+      id,
+      title: id,
+      svg,
+      missing,
+      meta: missing ? 'Missing' : svgDims(svg)
+    });
+  }
+
+  // selected options
+  for (const id of validOptions) {
+    let svg, missing = false;
+    try {
+      svg = await fetchSvg(`/api/projects/${p}/options/${encodeURIComponent(id)}`);
+    } catch {
+      missing = true;
+    }
+    panels.push({
+      kind: 'option',
+      id,
+      title: id,
+      svg,
+      missing,
+      meta: missing ? 'Missing' : svgDims(svg)
+    });
+  }
+
+  const sel = validVersions.length + validOptions.length;
+  hint.textContent = `Comparing ${project}: current.svg + new-current.svg` +
+    (sel ? ` + ${sel} selected item${sel > 1 ? 's' : ''}` : '') +
+    `. Promote any panel into new-current.svg, then "Close & apply".`;
+  $('projectName').textContent = project;
+  renderAll();
+}
+
+/* ---------- live current.svg updates (SSE) ---------- */
+
+let evtSource = null;
+let reconnectTimer = null;
+
+function setStatus(connected) {
+  const pill = $('statusPill');
+  pill.classList.toggle('ok', connected);
+  pill.classList.toggle('down', !connected);
+  pill.textContent = connected ? 'Connected' : 'Reconnecting…';
+}
+
+function refreshCurrentPanel() {
+  const p = encodeURIComponent(project);
+  fetchSvg(`/api/projects/${p}/current`)
+    .then((svg) => {
+      currentSvg = svg;
+      const cur = panels.find((x) => x.kind === 'current');
+      if (cur) {
+        cur.svg = svg;
+        cur.missing = false;
+        cur.meta = svgDims(svg);
+      }
+      renderAll();
+    })
+    .catch(() => {
+      const cur = panels.find((x) => x.kind === 'current');
+      if (cur) { cur.missing = true; cur.meta = 'No current.svg yet'; }
+      renderAll();
+    });
+}
+
+function connect() {
+  clearTimeout(reconnectTimer);
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/api/events');
+  evtSource.onopen = () => setStatus(true);
+  evtSource.onerror = () => {
+    setStatus(false);
+    if (evtSource.readyState === EventSource.CLOSED) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, 2000);
+    }
+  };
+  evtSource.addEventListener('current-changed', (e) => {
+    const d = JSON.parse(e.data || '{}');
+    if (d.project === project) refreshCurrentPanel();
+  });
+}
+
+/* ---------- close & apply / discard ---------- */
+
+function bufferDiffersFromCurrent() {
+  return bufferSvg != null && bufferSvg !== currentSvg;
+}
+
+$('applyBtn').addEventListener('click', () => {
+  if (bufferSvg == null) { toast('Nothing to apply — no current.svg'); return; }
+  if (!bufferDiffersFromCurrent()) {
+    $('applyDlgText').textContent =
+      `new-current.svg is identical to ${project}/current.svg, so applying it is a no-op. ` +
+      `Close the multi-view page?`;
+  } else {
+    $('applyDlgText').textContent =
+      `This will overwrite ${project}/current.svg with the contents of new-current.svg. ` +
+      `The previous current.svg is not committed to history automatically. This cannot be undone.`;
+  }
+  $('applyDlg').showModal();
+});
+
+$('applyDlgCancel').addEventListener('click', () => $('applyDlg').close());
+$('applyDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+
+$('applyDlgConfirm').addEventListener('click', async () => {
+  $('applyDlg').close();
+  if (bufferSvg == null) { toast('Nothing to apply'); return; }
+  try {
+    await api(`/api/projects/${encodeURIComponent(project)}/current`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/svg+xml' },
+      body: bufferSvg
+    });
+    toast('Applied — current.svg updated');
+    setTimeout(() => window.close(), 600);
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$('discardBtn').addEventListener('click', () => {
+  if (bufferDiffersFromCurrent()) {
+    if (!confirm('Discard your changes to new-current.svg and close without applying?')) return;
+  }
+  window.close();
+});
+
+/* ---------- init ---------- */
+
+if (!project) {
+  document.body.innerHTML = '<div class="error-banner">No <code>project</code> given. Open this page from the <b>Multi-view</b> button in SVG Studio.</div>';
+} else {
+  $('projectName').textContent = project;
+  load().then(() => connect()).catch((err) => {
+    $('hint').textContent = 'Failed to load: ' + err.message;
+    toast(err.message);
+  });
+}
+</script>
+</body>
+</html>

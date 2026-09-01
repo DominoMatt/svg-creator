@@ -624,6 +624,26 @@ batchBar.register({
   }
 });
 
+// Open the multi-view comparison page for the selected options/versions.
+// The page is a human-only view of the project; it never writes anything
+// until the user confirms "Close & apply" there.
+batchBar.register({
+  label: (n) => `Multi-view (${n})`,
+  title: 'Open a side-by-side comparison of current.svg with the selected options and versions',
+  className: 'secondary',
+  run: () => {
+    if (!state.project) { toast('Select a project first'); return; }
+    const versionIds = selection.idsIn(versionList);
+    const optionIds = selection.idsIn(optionList);
+    if (!versionIds.length && !optionIds.length) { toast('Check at least one option or version'); return; }
+    const q = new URLSearchParams({ project: state.project });
+    for (const id of versionIds) q.append('v', id);
+    for (const id of optionIds) q.append('o', id);
+    // window.open so the page can close itself via window.close().
+    window.open(`multi-view.html?${q.toString()}`, '_blank');
+  }
+});
+
 /* ---------- history ---------- */
 
 async function loadVersions() {

@@ -15,6 +15,10 @@ npm test      # spawns its own server on a free port — no setup
 
 - Every design is plain files under `public/svgs/<project>/` — no database.
   `server.js` is one Express file; `public/index.html` is the whole UI, no build step.
+- `public/multi-view.html` is a second, human-only page opened from `index.html`'s
+  **Multi-view** button. It is a pure client-side view: it reads via the existing
+  API and writes only through `PUT …/current` on "Close & apply". It never creates
+  files and is not an agent surface — agents keep working on `current.svg` as usual.
 - Change detection: the server diffs file mtimes every 800 ms and pushes SSE hints
   on `/api/events`. The browser re-fetches on each hint and fully resyncs whenever
   its connection (re)opens. Any writer — the UI, file tools, HTTP — shows up the
