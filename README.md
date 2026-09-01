@@ -64,6 +64,12 @@ up to date whenever you look.
   your current focus) or **Apply (force focus)** (jump back to this project), or
   **Close**/**Discard** to leave it unchanged. A human-only view — it never writes
   files until you confirm
+- **File tree** — 🌳 File tree opens a human-only page (`file-tree.html`) that
+  "decompresses" every project's SVG into a scrollable, hierarchical outline
+  (groups, paths, shapes) beside a canvas of the selected project. Click a node to
+  highlight the matching element on the canvas; versions and options appear as tree
+  nodes. Edits made here stage into a `temp-current` buffer — **Push to current**
+  applies them (capturing an undo slot), **Discard** drops them
 - **Raw source editor** — `</>` Code toggles editable SVG source; Save (or Ctrl/Cmd+S)
   writes it back and the rendered view refreshes. Works on empty projects too: paste SVG
   source into a brand-new project and Save creates `current.svg`. Live updates pause
@@ -90,11 +96,16 @@ can use them too.
 |---|---|---|
 | `GET` | `/api` | Route index — machine-readable endpoint list; points agents at `/api/conventions` |
 | `GET` | `/api/projects` | List all SVG projects |
+| `GET` | `/api/file-tree` | All projects with `current.svg` + staged `temp-current` + versions + options, parsed for the file-tree view |
 | `POST` | `/api/projects` | Create a new project `{ name }` |
 | `DELETE` | `/api/projects/:name` | Delete entire project — requires `{confirm: true}`; UI asks first |
 | `POST` | `/api/projects/:name/rename` | Rename project `{ name }` — folder renamed; agent 🎯 target follows |
 | `GET` | `/api/projects/:name/current` | Fetch working copy |
 | `PUT` | `/api/projects/:name/current` | Write working copy (accepts raw SVG or `{"svg": "..."}`) |
+| `GET` | `/api/projects/:name/temp-current` | Fetch the file-tree's staged working copy (404 if none) |
+| `PUT` | `/api/projects/:name/temp-current` | Stage a working copy for the file-tree view (no undo slot captured) |
+| `POST` | `/api/projects/:name/temp-current/push` | Push the staged copy into `current.svg` (captures undo slot) and clear it |
+| `DELETE` | `/api/projects/:name/temp-current` | Discard the staged copy without touching `current.svg` |
 | `GET` | `/api/projects/:name/options` | List pending options (+ committed flags) |
 | `POST` | `/api/projects/:name/options` | Submit an options round `{options: [{label, svg}]}` or singular `{label, svg}` — server assigns sequential letters; max 6 per round |
 | `GET` | `/api/projects/:name/options/:id` | Fetch one option's SVG |

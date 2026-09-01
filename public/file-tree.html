@@ -218,7 +218,7 @@ function parseSvgTree(svgString) {
   // It increments for EVERY element (including defs and use) so it stays in
   // sync with the tokenizer.
   let domCounter = 1;
-  function walk(el, depth, path) {
+  function walk(el, path) {
     const nodes = [];
     let childIdx = 0; // counts ALL children (matches el.children[idx] in findElementByPath)
     for (const child of el.children) {
@@ -252,7 +252,7 @@ function parseSvgTree(svgString) {
         source,
         hasComment: !!comment,
         domPath: childPath,
-        children: hasChildren ? walk(child, depth + 1, childPath) : [],
+        children: hasChildren ? walk(child, childPath) : [],
         pathData: !hasChildren ? (child.getAttribute('d') || child.getAttribute('cx') || child.getAttribute('r') || '') : null,
       };
       nodes.push(node);
@@ -260,7 +260,7 @@ function parseSvgTree(svgString) {
     return nodes;
   }
 
-  return walk(root, 0, []);
+  return walk(root, []);
 }
 
 /* ---------- tree rendering ---------- */
@@ -340,7 +340,7 @@ function renderTree() {
         curChildren.className = 'node-children';
         const treeNodes = parseSvgTree(working);
         for (let i = 0; i < treeNodes.length; i++) {
-          curChildren.appendChild(renderSvgNode(p.name, 'current', treeNodes[i], 0, 'current/' + i));
+          curChildren.appendChild(renderSvgNode(p.name, 'current', treeNodes[i], 'current/' + i));
         }
         curLi.appendChild(curChildren);
       }
@@ -444,7 +444,7 @@ function renderTree() {
   }
 }
 
-function renderSvgNode(project, file, node, depth, path) {
+function renderSvgNode(project, file, node, path) {
   const li = document.createElement('li');
   li.className = 'node';
   const row = document.createElement('div');
@@ -519,7 +519,7 @@ function renderSvgNode(project, file, node, depth, path) {
     const children = document.createElement('ul');
     children.className = 'node-children' + (isExpanded(project, path) ? '' : ' collapsed');
     for (let i = 0; i < node.children.length; i++) {
-      children.appendChild(renderSvgNode(project, file, node.children[i], depth + 1, path + '/' + i));
+      children.appendChild(renderSvgNode(project, file, node.children[i], path + '/' + i));
     }
     li.appendChild(children);
   }
@@ -796,21 +796,11 @@ function tokenizeSvg(svgString) {
 // advances through the source order. We approximate by walking the DOM.
 function domPathToFlatIndex(svgString, domPath) {
   const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
-  // Walk the DOM counting elements in source order (same as tokenizer).
-  let counter = 0;
-  let target = -1;
-  function walk(el, depth, path) {
-    for (const child of el.children) {
-      const childPath = path.concat(counter);
-      // counter here is the child index within el; but we need the flat
-      // element index. We track a global element counter.
-    }
-  }
-  // Simpler: count elements up to the target using the tokenizer and the
-  // domPath. Since domPath gives child indices, and the tokenizer lists
-  // elements in source order, we can compute the flat index by walking the
-  // DOM and counting every element (including defs/use) until we reach the
-  // target path.
+  // Count elements up to the target using the tokenizer and the domPath.
+  // Since domPath gives child indices, and the tokenizer lists elements in
+  // source order, we can compute the flat index by walking the DOM and
+  // counting every element (including defs/use) until we reach the target
+  // path.
   let flat = 0;
   let found = -1;
   (function walk(el, path) {
