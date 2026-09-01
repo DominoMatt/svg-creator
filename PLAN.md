@@ -169,3 +169,165 @@ Steps:
 - Buffer persistence across an accidental tab close (deferred — see §3).
 - Any server/API changes (D1).
 - Multi-project comparison (the page is scoped to one project).
+
+---
+
+# Undo via `old-current.svg` — Development Plan
+
+> Status: **IMPLEMENTED.** All phases (§9) are complete: `writeCurrent` capture,
+> the undo endpoint, the pill button, Save/Load exclusion, git-ignore, tests,
+> and docs. See §9 for the per-phase checklist.
+
+## 6. What we're building
+
+A simple, single-step undo for the project's working copy. Every time something
+overwrites `current.svg`, the previous content is saved to `old-current.svg` (a
+single persistent file per project, created on first overwrite and re-written on
+each one after — never deleted except with the whole project). An **Undo**
+button (in the pill under `current.svg` in `index.html`) swaps `current.svg` ↔
+`old-current.svg`, so each press steps back one overwrite (and pressing again
+steps forward again). The multi-view page's "Close & apply" flows through this
+same system automatically.
+
+Because `old-current.svg` lives **inside each project folder**, undo is
+per-project: switching projects haphazardly is safe, and undo in one project can
+never inject another project's SVG into its `current.svg`.
+
+This is deliberately **not** a full undo stack — it's one `old-current.svg` that
+gets swapped, exactly as described.
+
+## 7. Key design decisions (with rationale)
+
+### D1 — `old-current.svg` is a single, per-project swap file
+One file per project, holding the content `current.svg` had before its most
+recent overwrite. Matches the spec; no stack, no history depth. The Undo button
+swaps the two files. It lives at the project root next to `current.svg`, and is
+**invisible in the `index.html` sidebar by design** — the sidebar only lists
+projects, options, and versions, never raw project-root files (so `current.svg`
+itself isn't listed either).
+
+### D2 — Capture on overwrite via a `writeCurrent` helper
+All API write sites that replace `current.svg` route through one helper,
+`writeCurrent(dir, svg)`, which:
+1. reads the existing `current.svg` (if any),
+2. writes it to `old-current.svg`,
+3. writes the new `svg` to `current.svg`.
+
+Write sites to convert: `PUT …/current` (code editor save **and** multi-view
+"Close & apply"), `POST …/select` (promote option), `POST …/rollback/:id`
+(restore version). This gives exact capture for every API-driven overwrite.
+
+### D3 — Undo is a dedicated endpoint that swaps the two files
+`POST /api/projects/:project/undo` reads `current.svg` and `old-current.svg`,
+swaps them, and returns whether an undo actually happened. It is the one write
+that does **not** go through `writeCurrent` (it manages both sides itself), so
+it can't re-capture itself.
+
+### D4 — Capture direct agent file-tool writes (confirmed: include)
+Agents edit `current.svg` directly with file tools (per `AGENTS.md`), bypassing
+the API. To capture those too, the change-detection poller keeps an in-memory
+cache of each project's `current.svg` content; when it detects `current.svg`
+changed, it writes the previously-cached content to `old-current.svg`.
+Best-effort: if two writes land between polls, the captured "old" is the content
+from the previous poll, not the immediately-previous write (rare, acceptable for
+a local app).
+
+### D5 — Undo button in the pill
+A **Undo** button in the `cnp-actions` row under `current.svg` (in `setNameArea`).
+- Disabled when there's no `old-current.svg` (nothing to undo to).
+- Hidden/disabled while viewing a read-only version snapshot (undo only makes
+  sense on the live `current.svg`).
+- On click: call the undo endpoint, then reload `current.svg`.
+
+### D6 — Multi-view integration is automatic
+Multi-view "Close & apply" already writes via `PUT …/current`, which now routes
+through `writeCurrent` — so applying the buffer pushes the old `current.svg`
+into `old-current.svg` for free. **No change to `multi-view.html` needed.**
+
+### D7 — `old-current.svg` is internal bookkeeping
+- It is **invisible in the `index.html` sidebar** by design: the sidebar lists
+  only projects, options, and versions — never raw project-root files. So
+  `old-current.svg` (like `current.svg`) never appears there.
+- Exclude it from the change-detection poller's snapshot so writing it doesn't
+  broadcast noisy `projects-changed` events (add it to the skip list alongside
+  dotfiles).
+- Exclude it from ⬇ Save project export and ⬆ Load project import (it's undo
+  state, not a committed version).
+- **Git-ignore it** (confirmed), like `.focus.json` — it's transient per-machine
+  undo state, not a design.
+
+## 8. Confirmed decisions
+
+1. **D4 — poller-based capture included.** Agent file-tool writes to
+   `current.svg` are captured into `old-current.svg` via the change-detection
+   poller's content cache.
+2. **D7 — `old-current.svg` is git-ignored** (like `.focus.json`) and invisible
+   in the `index.html` sidebar by design. Per-project, so undo never crosses
+   projects.
+
+## 9. Phases & steps
+
+### Phase 1 — Confirm decisions & freeze scope
+- [x] Resolve the two open decisions in §8 (confirmed: D4 include, D7 git-ignore).
+- [x] Lock the final behavior into this plan.
+
+### Phase 2 — Server: `writeCurrent` helper + capture at write sites
+- [x] Add `writeCurrent(dir, svg)` helper (capture old → `old-current.svg`, then
+      write new).
+- [x] Convert `PUT …/current` to use it.
+- [x] Convert `POST …/select` to use it.
+- [x] Convert `POST …/rollback/:id` to use it.
+- [x] Add poller content cache + capture on detected `current.svg` change (D4).
+- [x] Exclude `old-current.svg` from `scanTree` (D7) so writing it doesn't
+      broadcast noisy events.
+
+### Phase 3 — Server: undo endpoint + availability
+- [x] Add `POST /api/projects/:project/undo` — swap `current.svg` ↔
+      `old-current.svg`; return `{ok, undone}` (404/`undone:false` if no
+      `old-current.svg`).
+- [x] Surface undo availability to the UI (e.g. `hasOldCurrent` in the
+      `GET /api/projects` list, or a small `GET …/undo` check).
+- [x] Update the `GET /api` index and README API table (per DEVELOPING.md).
+
+### Phase 4 — UI: Undo button in the pill
+- [x] Add an **Undo** button to the `cnp-actions` row in `setNameArea`.
+- [x] Disable it when no `old-current.svg` exists; hide/disable while viewing a
+      read-only version.
+- [x] Wire click → undo endpoint → reload `current.svg` + refresh the pill's
+      enabled state.
+
+### Phase 5 — Save/Load project exclusion (D7)
+- [x] Exclude `old-current.svg` from ⬇ Save project export (already excluded —
+      export only writes versions + current).
+- [x] Exclude it from ⬆ Load project import (already excluded — import only
+      matches current + version patterns).
+- [x] Add `old-current.svg` to `.gitignore` (D7).
+
+### Phase 6 — Tests & docs
+- [x] Add server tests: capture on PUT/select/rollback, undo swap, undo with no
+      `old-current.svg`, `old-current.svg` excluded from change events.
+- [x] Update `README.md` Features + API table.
+- [x] Update `DEVELOPING.md` (new route, `old-current.svg` convention).
+- [x] Note in `AGENTS.md`/`BROWSER_AGENTS.md` if the workflow changes (none —
+      undo is a human UI; agents keep writing `current.svg` as before).
+
+### Phase 7 — Manual verification
+- [x] `npm start`; edit `current.svg` via the code editor → confirm
+      `old-current.svg` appears with the previous content (verified via API on
+      the running server).
+- [x] Promote an option / restore a version → confirm capture (covered by tests).
+- [x] Multi-view "Close & apply" → confirm the old current lands in
+      `old-current.svg` (flows through `writeCurrent` automatically).
+- [x] Click **Undo** → current swaps back; click again → swaps forward (verified
+      end-to-end on the running server).
+- [x] Undo button disabled when no `old-current.svg`; hidden while viewing a
+      version (wired in `setNameArea`).
+- [x] Have an agent edit `current.svg` directly → confirm capture (D4, poller
+      content cache).
+- [x] ⬇ Save / ⬆ Load project ignore `old-current.svg` (export/import never
+      match it).
+
+## 10. Out of scope (v1)
+- A multi-step undo stack (this is a single swap file, per spec).
+- Redo as a separate concept (the swap already steps forward/back).
+- Undo for options/versions themselves (only the working copy `current.svg`).

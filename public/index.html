@@ -170,7 +170,7 @@ const projectList = $('projectList'), versionList = $('versionList'),
       svgInfo = $('svgInfo'), commitBtn = $('commitBtn'),
       commitLabel = $('commitLabel');
 
-const state = { project: null, viewingVersion: null, target: null, codeMode: false };
+const state = { project: null, viewingVersion: null, target: null, codeMode: false, hasOldCurrent: false, undoCooldown: false, hasOldCurrentByProject: {} };
 
 function toast(msg) {
   const t = $('toast');
@@ -210,7 +210,10 @@ async function loadProjects(selectName) {
     li.textContent = 'No projects yet';
     projectList.appendChild(li);
   }
+  state.hasOldCurrentByProject = {};
   for (const p of projects) {
+    state.hasOldCurrentByProject[p.name] = !!p.hasOldCurrent;
+    if (state.project === p.name) state.hasOldCurrent = !!p.hasOldCurrent;
     const li = document.createElement('li');
     if (state.project === p.name) li.classList.add('active');
     if (p.forkedFrom) {
@@ -289,6 +292,9 @@ function renderEmpty() {
 async function selectProject(name) {
   state.project = name;
   state.viewingVersion = null;
+  // Undo availability is per-project; pick it up from the last projects list
+  // so switching projects doesn't carry the previous project's flag over.
+  state.hasOldCurrent = !!state.hasOldCurrentByProject[name];
   setCodeMode(false);
   commitBtn.disabled = false;
   $('deleteBtn').disabled = false;
@@ -352,6 +358,11 @@ function setNameArea(title, viewingVersion = null) {
   row.append(
     pillBtn('Fork', viewingVersion ? 'Fork this snapshot into a new project' : 'Fork current.svg into a new project', () => doFork(viewingVersion)),
     pillBtn('⬇ Save', viewingVersion ? 'Download this snapshot' : 'Download current.svg', saveCurrentOrVersion),
+    // Undo: only meaningful on the live current.svg, so it's hidden while a
+    // read-only snapshot is open; disabled when there's nothing to undo, and
+    // grayed out briefly after each press so rapid spam can't race the change
+    // poller and clobber old-current.svg with a stale capture.
+    ...(viewingVersion ? [] : [pillBtn('↩ Undo', state.undoCooldown ? 'Undo is settling — wait a moment' : (state.hasOldCurrent ? 'Swap current.svg with the previous version (old-current.svg)' : 'Nothing to undo yet'), () => undoCurrent(), !state.hasOldCurrent || state.undoCooldown)]),
     // Target: always enabled, label changes when targeted
     pillBtn(isTargeted ? (viewingVersion ? '🎯 PROJECT TARGETED' : 'Targeted') : (viewingVersion ? 'Target Project' : '🎯 Target Project'), isTargeted ? 'This project is the agent target' : (viewingVersion ? 'Tell the AI agent to edit current.svg (not this snapshot)' : 'Tell the AI agent to edit this project'), () => targetProject()),
     // Restore only makes sense for a snapshot, so it appears just while read-only
@@ -627,6 +638,17 @@ batchBar.register({
 // Open the multi-view comparison page for the selected options/versions.
 // The page is a human-only view of the project; it never writes anything
 // until the user confirms "Close & apply" there.
+//
+// The multi-view page calls this (via window.opener) right before it closes.
+// Only 'apply-focus' should move focus here — 'apply-keep' writes the change
+// but leaves the currently-focused project alone, and close/discard send
+// nothing (so a discarded multi-view never yanks you away from what you're
+// working on).
+function multiViewResult(project, result) {
+  if (result === 'apply-focus' && project && state.project !== project) {
+    selectProject(project);
+  }
+}
 batchBar.register({
   label: (n) => `Multi-view (${n})`,
   title: 'Open a side-by-side comparison of current.svg with the selected options and versions',
@@ -729,6 +751,43 @@ async function restoreVersion(id) {
     loadVersions();
   } catch (err) {
     toast(err.message);
+  }
+}
+
+// Undo swaps current.svg with old-current.svg. After the swap, whether there's
+// still something to undo depends on whether the old slot survived, so we
+// refresh the pill state from the server rather than guessing.
+//
+// A cooldown (longer than the 800ms change poll) disables and grays out the
+// button after each press. Without it, spamming undo faster than the poller
+// runs lets the poller's stale content cache overwrite old-current.svg with the
+// wrong content, silently losing the version we were toggling back to.
+const UNDO_COOLDOWN_MS = 1200;
+async function undoCurrent() {
+  if (state.undoCooldown) return; // button is disabled anyway; belt & braces
+  state.undoCooldown = true;
+  setNameArea(`${state.project}/current.svg`); // gray the button out now
+  try {
+    const res = await api(`/api/projects/${encodeURIComponent(state.project)}/undo`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Undo failed');
+    if (!data.undone) {
+      toast('Nothing to undo');
+      state.hasOldCurrent = false;
+      setNameArea(`${state.project}/current.svg`);
+      return;
+    }
+    toast('Undid last change');
+    // Re-select to refresh hasOldCurrent and reload current.svg.
+    await loadProjects(state.project);
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    // Let the poller settle before re-enabling, so the next press can't race it.
+    setTimeout(() => {
+      state.undoCooldown = false;
+      if (state.project) setNameArea(`${state.project}/current.svg`);
+    }, UNDO_COOLDOWN_MS);
   }
 }
 
@@ -1137,7 +1196,12 @@ function connect() {
     }
   };
   const on = (ev, fn) => evtSource.addEventListener(ev, (e) => fn(JSON.parse(e.data || '{}')));
-  on('current-changed', (d) => { if (d.project === state.project && !state.viewingVersion && !state.codeMode) loadCurrent(); });
+  on('current-changed', (d) => {
+    if (d.project !== state.project) return;
+    // Refresh hasOldCurrent so the Undo button's enabled state stays honest.
+    loadProjects();
+    if (!state.viewingVersion && !state.codeMode) loadCurrent();
+  });
   on('versions-changed', (d) => { if (d.project === state.project) loadVersions(); });
   on('projects-changed', () => loadProjects());
   // Agent re-targeted the project from chat (.focus.json changed) → move the 🎯 marker

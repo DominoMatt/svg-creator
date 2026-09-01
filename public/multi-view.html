@@ -73,11 +73,12 @@
 <dialog id="applyDlg">
   <div class="dlg-head">
     <h3>Apply new-current.svg?</h3>
-    <button id="applyDlgCancel" class="small secondary">Cancel</button>
+    <button id="applyDlgCancel" class="small secondary">Close</button>
   </div>
   <p class="dlg-hint" id="applyDlgText"></p>
   <div class="dlg-actions">
-    <button id="applyDlgConfirm" class="danger">Overwrite current.svg</button>
+    <button id="applyDlgKeep">Apply</button>
+    <button id="applyDlgFocus">Apply (force focus)</button>
   </div>
 </dialog>
 
@@ -370,7 +371,7 @@ $('applyBtn').addEventListener('click', () => {
   } else {
     $('applyDlgText').textContent =
       `This will overwrite ${project}/current.svg with the contents of new-current.svg. ` +
-      `The previous current.svg is not committed to history automatically. This cannot be undone.`;
+      `The previous current.svg is saved to old-current.svg, so you can undo this from the main page.`;
   }
   $('applyDlg').showModal();
 });
@@ -378,7 +379,14 @@ $('applyBtn').addEventListener('click', () => {
 $('applyDlgCancel').addEventListener('click', () => $('applyDlg').close());
 $('applyDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 
-$('applyDlgConfirm').addEventListener('click', async () => {
+// Tell the opener (index.html) how this page is closing. Only 'apply-focus'
+// should move focus there; 'apply-keep' writes the change but leaves the
+// currently-focused project alone, and close/discard send nothing.
+function notifyOpener(result) {
+  try { window.opener?.multiViewResult?.(project, result); } catch {}
+}
+
+async function applyBuffer(result) {
   $('applyDlg').close();
   if (bufferSvg == null) { toast('Nothing to apply'); return; }
   try {
@@ -388,11 +396,15 @@ $('applyDlgConfirm').addEventListener('click', async () => {
       body: bufferSvg
     });
     toast('Applied — current.svg updated');
+    notifyOpener(result);
     setTimeout(() => window.close(), 600);
   } catch (err) {
     toast(err.message);
   }
-});
+}
+
+$('applyDlgKeep').addEventListener('click', () => applyBuffer('apply-keep'));
+$('applyDlgFocus').addEventListener('click', () => applyBuffer('apply-focus'));
 
 $('discardBtn').addEventListener('click', () => {
   if (bufferDiffersFromCurrent()) {
