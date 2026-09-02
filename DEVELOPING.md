@@ -29,7 +29,11 @@ npm test      # spawns its own server on a free port — no setup
   (`PUT …/temp-current`), applying them only on an explicit **Push to current**
   (`POST …/temp-current/push`, which captures an undo slot) or discarding them
   (`DELETE …/temp-current`). It never writes `current.svg` directly and is not an
-  agent surface.
+  agent surface. Structural edits (rename `id`/comment, delete, create groups,
+  drag-and-drop reorder/nest) mutate a parsed DOM, then `saveWorkingDoc` re-emits
+  the whole document through `formatSvg` — a formatter that keeps the source
+  AUTHORING-style (one element per line, indentation matching nesting depth,
+  comments on their own lines, `id` first).
 - Change detection: the server diffs file mtimes every 800 ms and pushes SSE hints
   on `/api/events`. The browser re-fetches on each hint and fully resyncs whenever
   its connection (re)opens. Any writer — the UI, file tools, HTTP — shows up the

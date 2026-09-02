@@ -68,7 +68,9 @@ up to date whenever you look.
   "decompresses" every project's SVG into a scrollable, hierarchical outline
   (groups, paths, shapes) beside a canvas of the selected project. Click a node to
   highlight the matching element on the canvas; versions and options appear as tree
-  nodes. Edits made here stage into a `temp-current` buffer — **Push to current**
+  nodes. It's a structural editor: rename an element's `id`/comment, delete nodes,
+  create groups, and drag-and-drop to reorder or nest (cross-parent moves included).
+  Edits made here stage into a `temp-current` buffer — **Push to current**
   applies them (capturing an undo slot), **Discard** drops them
 - **Raw source editor** — `</>` Code toggles editable SVG source; Save (or Ctrl/Cmd+S)
   writes it back and the rendered view refreshes. Works on empty projects too: paste SVG

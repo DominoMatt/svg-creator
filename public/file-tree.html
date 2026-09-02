@@ -1016,70 +1016,19 @@ function moveIdFirst(el) {
 // tagStart is the char offset of the element's opening tag and comment is the
 // comment (if any) immediately preceding it. Returns the element at the given
 // flat index.
-function tokenizeSvg(svgString) {
-  const tokens = [];
-  const tokenRe = /<!--([\s\S]*?)-->|<([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
-  let pendingComment = null;
-  let tm;
-  while ((tm = tokenRe.exec(svgString)) !== null) {
-    if (tm[1] !== undefined) {
-      pendingComment = tm[1].trim();
-    } else {
-      tokens.push({
-        name: tm[2],
-        attrs: tm[3],
-        comment: pendingComment,
-        tagStart: tm.index
-      });
-      pendingComment = null;
-    }
-  }
-  return tokens;
-}
-
-// Map a domPath (child indices from root) to a flat element index in the
-// tokenizer's element list. The root <svg> is element 0; each child index
-// advances through the source order. We approximate by walking the DOM.
-function domPathToFlatIndex(svgString, domPath) {
-  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
-  // Count elements up to the target using the tokenizer and the domPath.
-  // Since domPath gives child indices, and the tokenizer lists elements in
-  // source order, we can compute the flat index by walking the DOM and
-  // counting every element (including defs/use) until we reach the target
-  // path.
-  let flat = 0;
-  let found = -1;
-  (function walk(el, path) {
-    if (found !== -1) return;
-    for (let i = 0; i < el.children.length; i++) {
-      const child = el.children[i];
-      const childPath = path.concat(i);
-      flat++; // this child is element `flat` in source order
-      if (childPath.length === domPath.length && childPath.every((v, k) => v === domPath[k])) {
-        found = flat;
-        return;
-      }
-      walk(child, childPath);
-    }
-  })(doc.documentElement, []);
-  return found;
-}
-
 function openRenameDialog(project, node) {
   renameTarget = { project, node };
   getWorkingDoc(project)
-    .then(({ doc, svgString }) => {
+    .then(({ doc }) => {
       const el = findElementByDomPath(doc, node.domPath);
       if (!el) {
         toast('Could not locate element in current.svg');
         return;
       }
       renameId.value = el.getAttribute('id') || '';
-      // Find the comment preceding this element.
-      const flat = domPathToFlatIndex(svgString, node.domPath);
-      const tokens = tokenizeSvg(svgString);
-      const tok = tokens[flat];
-      renameComment.value = (tok && tok.comment) || '';
+      // Find the comment preceding this element (same DOM walk saveRename uses).
+      const commentNode = findPrecedingComment(doc, el);
+      renameComment.value = commentNode ? commentNode.data.trim() : '';
       renameDlgHint.textContent = `Element <${node.type}> in project "${project}"`;
       renameDlg.showModal();
       renameId.focus();
