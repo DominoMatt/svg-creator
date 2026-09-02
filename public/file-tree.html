@@ -97,6 +97,20 @@
   .status-dot.dot-none { background: #28a745; }
   .dot-bang { font-size: .7rem; font-weight: 700; color: #ffc107; line-height: 1; }
 
+  /* Node actions (drag handle, add group, delete) — revealed on hover */
+  .node-actions { display: inline-flex; align-items: center; gap: .15rem; opacity: 0; transition: opacity .15s; flex-shrink: 0; }
+  .node-actions.push { margin-left: auto; }
+  .node-row:hover .node-actions { opacity: 1; }
+  .action { cursor: pointer; font-size: .72rem; color: #888; padding: .05rem .22rem; border-radius: 3px; line-height: 1; user-select: none; }
+  .action:hover { background: #e7f1ff; color: #0366d6; }
+  .action.delete:hover { background: #fde8e8; color: #dc3545; }
+  .drag-handle { cursor: grab; color: #bbb; letter-spacing: -1px; }
+  .drag-handle:active { cursor: grabbing; }
+  .node-row.dragging { opacity: .5; }
+  .node-row.drop-before { box-shadow: inset 0 2px 0 #007bff; }
+  .node-row.drop-after { box-shadow: inset 0 -2px 0 #007bff; }
+  .node-row.drop-inside { background: #e7f1ff; box-shadow: inset 0 0 0 2px #007bff; }
+
   .tree-empty { padding: 1rem .9rem; color: #aaa; font-size: .82rem; font-style: italic; }
 
   /* ---------- canvas ---------- */
@@ -177,6 +191,25 @@
   </label>
   <div class="dlg-actions">
     <button id="renameDlgSave">Save</button>
+  </div>
+</dialog>
+
+<dialog id="createGroupDlg">
+  <div class="dlg-head">
+    <h3>New group</h3>
+    <button id="createGroupDlgCancel" class="small secondary">Close</button>
+  </div>
+  <p class="dlg-hint" id="createGroupDlgHint"></p>
+  <label class="dlg-field">
+    <span>id</span>
+    <input id="createGroupId" type="text" placeholder="kebab-case-name" spellcheck="false">
+  </label>
+  <label class="dlg-field">
+    <span>comment</span>
+    <input id="createGroupComment" type="text" placeholder="optional note shown in the tree" spellcheck="false">
+  </label>
+  <div class="dlg-actions">
+    <button id="createGroupDlgSave">Create</button>
   </div>
 </dialog>
 
@@ -265,6 +298,9 @@ function parseSvgTree(svgString) {
       if (tag === 'defs' || tag === 'use') continue;
       const id = child.getAttribute('id');
       const hasChildren = child.children.length > 0;
+      // A <g> is a group/folder even when empty — it's a container the user
+      // can add children to, so it must render like other groups.
+      const isGroup = tag === 'g' || hasChildren;
 
       let label, source;
       if (id) {
@@ -284,9 +320,10 @@ function parseSvgTree(svgString) {
         label,
         source,
         hasComment: !!comment,
+        isGroup,
         domPath: childPath,
         children: hasChildren ? walk(child, childPath) : [],
-        pathData: !hasChildren ? (child.getAttribute('d') || child.getAttribute('cx') || child.getAttribute('r') || '') : null,
+        pathData: !isGroup ? (child.getAttribute('d') || child.getAttribute('cx') || child.getAttribute('r') || '') : null,
       };
       nodes.push(node);
     }
@@ -364,9 +401,23 @@ function renderTree() {
       curIcon.textContent = '🖼';
       const curLabel = document.createElement('span');
       curLabel.className = 'node-label';
-      curLabel.textContent = p.tempCurrent ? '//current (staged)' : '//current';
-      curRow.append(curTwisty, curIcon, curLabel);
+      curLabel.textContent = '//current';
+      const curActions = document.createElement('span');
+      curActions.className = 'node-actions push';
+      const curAdd = document.createElement('span');
+      curAdd.className = 'action add-group';
+      curAdd.textContent = '+';
+      curAdd.title = 'Add a top-level group';
+      curAdd.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCreateGroupDialog(p.name, []);
+      });
+      curActions.appendChild(curAdd);
+      curRow.append(curTwisty, curIcon, curLabel, curActions);
       curRow.addEventListener('click', () => selectFile(p.name, 'current'));
+      // Drop target: dropping onto //current moves an element to the top level
+      // (appended as the last child of the <svg> root).
+      makeRowDropTarget(curRow, p.name, { domPath: [], isGroup: true, children: [] });
       curLi.appendChild(curRow);
 
       // current.svg children (the parsed tree of the working copy)
@@ -483,8 +534,10 @@ function renderTree() {
 function renderSvgNode(project, file, node, path) {
   const li = document.createElement('li');
   li.className = 'node';
+  // A node is a group if it's a <g> (even empty) or has children.
+  const isGroup = node.isGroup || node.children.length > 0;
   const row = document.createElement('div');
-  row.className = 'node-row ' + (node.children.length ? 'group-row' : 'leaf-row');
+  row.className = 'node-row ' + (isGroup ? 'group-row' : 'leaf-row');
   row.dataset.project = project;
   row.dataset.file = file;
   row.dataset.id = node.id || '';
@@ -492,16 +545,16 @@ function renderSvgNode(project, file, node, path) {
   row.dataset.domPath = JSON.stringify(node.domPath);
 
   const twisty = document.createElement('span');
-  twisty.className = 'twisty' + (node.children.length ? '' : ' leaf');
-  if (node.children.length) {
+  twisty.className = 'twisty' + (isGroup ? '' : ' leaf');
+  if (isGroup) {
     twisty.textContent = isExpanded(project, path) ? '▾' : '▸';
   }
   const icon = document.createElement('span');
   // Groups get a folder; leaves get nothing (and take no space) so their
   // labels sit flush left, aligned with the folders' twisty rather than
   // pushed right by an empty icon slot.
-  icon.className = 'node-icon' + (node.children.length ? '' : ' leaf');
-  icon.textContent = node.children.length ? '📁' : '';
+  icon.className = 'node-icon' + (isGroup ? '' : ' leaf');
+  icon.textContent = isGroup ? '📁' : '';
   // Status dot: red = no id & no comment (falls back to type), yellow =
   // comment-driven label, green = has a proper id. Clicking the dot opens the
   // rename dialog. A trailing ! shows if the element has a comment.
@@ -535,9 +588,42 @@ function renderSvgNode(project, file, node, path) {
     meta.textContent = node.type;
   }
 
-  row.append(twisty, icon, label, dotWrap, meta);
+  // Hover actions: drag handle (reorder), +Group (groups only), delete.
+  const actions = document.createElement('span');
+  actions.className = 'node-actions';
+  const handle = document.createElement('span');
+  handle.className = 'action drag-handle';
+  handle.textContent = '⋮⋮';
+  handle.title = 'Drag to reorder';
+  actions.appendChild(handle);
+  if (isGroup) {
+    const add = document.createElement('span');
+    add.className = 'action add-group';
+    add.textContent = '+';
+    add.title = 'Add a group here';
+    add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCreateGroupDialog(project, node.domPath);
+    });
+    actions.appendChild(add);
+  }
+  const del = document.createElement('span');
+  del.className = 'action delete';
+  del.textContent = '✕';
+  del.title = 'Delete element';
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteNode(project, node);
+  });
+  actions.appendChild(del);
 
-  if (node.children.length) {
+  row.append(twisty, icon, label, dotWrap, meta, actions);
+
+  // Drag-and-drop reordering (sibling-only).
+  makeRowDraggable(row, project, node);
+  makeRowDropTarget(row, project, node);
+
+  if (isGroup) {
     row.addEventListener('click', () => {
       const key = nodeKey(project, path);
       const nowExpanded = !state.expandedNodes[key];
@@ -756,15 +842,136 @@ function connectSSE() {
   es.addEventListener('focus-changed', refresh);
 }
 
+/* ---------- structural editing (shared helpers) ---------- */
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// Fetch the working copy (temp-current if staged, else current.svg) and parse
+// it into a DOM. Returns {doc, svgString}.
+async function getWorkingDoc(project) {
+  const res = await fetch(`/api/projects/${encodeURIComponent(project)}/temp-current`);
+  const svgString = res.ok
+    ? await res.text()
+    : await (await fetch(`/api/projects/${encodeURIComponent(project)}/current`)).text();
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  return { doc, svgString };
+}
+
+// Reformat a parsed SVG DOM into AUTHORING-style markup: one element per line,
+// two-space indentation matching nesting depth, comments on their own lines,
+// and `id` first in each opening tag. Structural edits (drag/drop, create,
+// delete) move DOM nodes around and leave whitespace behind, so we always
+// re-emit the whole document cleanly instead of trying to patch the gaps.
+function formatSvg(doc) {
+  const out = [];
+  const root = doc.documentElement;
+  out.push('<' + root.nodeName + attrsToString(root) + '>');
+  emitChildren(root, '  ');
+  out.push('</' + root.nodeName + '>');
+  return out.join('\n') + '\n';
+
+  function emitChildren(parent, indent) {
+    for (const node of parent.childNodes) {
+      if (node.nodeType === Node.COMMENT_NODE) {
+        out.push(indent + '<!--' + node.data.trim() + '-->');
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        emitElement(node, indent);
+      } else if (node.nodeType === Node.TEXT_NODE && node.data.trim() !== '') {
+        out.push(indent + node.data.trim());
+      }
+      // Whitespace-only text nodes are dropped; the drawing has no text content.
+    }
+  }
+
+  function emitElement(el, indent) {
+    if (el.children.length) {
+      out.push(indent + '<' + el.nodeName + attrsToString(el) + '>');
+      emitChildren(el, indent + '  ');
+      out.push(indent + '</' + el.nodeName + '>');
+    } else {
+      out.push(indent + '<' + el.nodeName + attrsToString(el) + '/>');
+    }
+  }
+}
+
+// Serialize an element's attributes with `id` first (the canonical form).
+function attrsToString(el) {
+  const attrs = [];
+  for (const a of el.attributes) attrs.push([a.name, a.value]);
+  const idIdx = attrs.findIndex(([n]) => n === 'id');
+  if (idIdx > 0) {
+    const id = attrs.splice(idIdx, 1)[0];
+    attrs.unshift(id);
+  }
+  return attrs.length ? ' ' + attrs.map(([n, v]) => `${n}="${v}"`).join(' ') : '';
+}
+
+// Serialize a working-copy DOM, stage it into temp-current.svg, then re-render
+// the tree and canvas. Throws on failure (caller toasts).
+async function saveWorkingDoc(project, doc) {
+  const out = formatSvg(doc);
+  await api(`/api/projects/${encodeURIComponent(project)}/temp-current`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/svg+xml' },
+    body: out
+  });
+  toast('Saved to working copy — push to apply to current.svg');
+  await loadData();
+  if (state.viewing && state.viewing.project === project) {
+    await loadCanvas(project, 'current');
+  }
+}
+
+// Remove the comment node immediately preceding `el` (and the whitespace that
+// followed it), so no orphan comment is left behind. No-op if there is none.
+function removePrecedingComment(doc, el) {
+  const commentNode = findPrecedingComment(doc, el);
+  if (!commentNode) return;
+  const next = commentNode.nextSibling;
+  if (next && next.nodeType === Node.TEXT_NODE && next.data.trim() === '') {
+    commentNode.parentNode.removeChild(next);
+  }
+  commentNode.parentNode.removeChild(commentNode);
+}
+
+// Append `el` as the last child of `parent`, with an optional preceding
+// comment, matching the file's indentation style. Inserts before the parent's
+// trailing whitespace (the newline+indent preceding the closing tag) so the
+// new element lands on its own line.
+function appendChildWithComment(doc, parent, el, comment) {
+  let ref = null;
+  const last = parent.lastChild;
+  if (last && last.nodeType === Node.TEXT_NODE && last.data.trim() === '') {
+    ref = last;
+  }
+  // Determine indent from the last element child's preceding whitespace.
+  let indent = '\n  ';
+  const lastEl = parent.lastElementChild;
+  if (lastEl) {
+    const ws = lastEl.previousSibling;
+    if (ws && ws.nodeType === Node.TEXT_NODE && ws.data.trim() === '') indent = ws.data;
+  }
+  const insert = (node) => parent.insertBefore(node, ref);
+  if (comment) {
+    insert(doc.createTextNode(indent));
+    insert(doc.createComment(` ${comment} `));
+    insert(doc.createTextNode(indent));
+  } else {
+    insert(doc.createTextNode(indent));
+  }
+  insert(el);
+}
+
 /* ---------- rename dialog ---------- */
 
 const renameDlg = $('renameDlg'), renameId = $('renameId'), renameComment = $('renameComment'),
       renameDlgHint = $('renameDlgHint');
 let renameTarget = null; // {project, node}
 
-// Find the element in the parsed SVG DOM by domPath.
+// Find the element in the parsed SVG DOM by domPath. An empty path addresses
+// the <svg> root itself (used as the "top level" drop target).
 function findElementByDomPath(doc, domPath) {
-  if (!domPath || !domPath.length) return null;
+  if (!domPath || !domPath.length) return doc.documentElement;
   let el = doc.documentElement;
   for (const idx of domPath) {
     if (!el || !el.children || idx >= el.children.length) return null;
@@ -860,11 +1067,8 @@ function domPathToFlatIndex(svgString, domPath) {
 
 function openRenameDialog(project, node) {
   renameTarget = { project, node };
-  // Read the working copy (temp-current if staged, else current.svg).
-  fetch(`/api/projects/${encodeURIComponent(project)}/temp-current`)
-    .then((res) => res.ok ? res.text() : fetch(`/api/projects/${encodeURIComponent(project)}/current`).then((r) => r.text()))
-    .then((svgString) => {
-      const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  getWorkingDoc(project)
+    .then(({ doc, svgString }) => {
       const el = findElementByDomPath(doc, node.domPath);
       if (!el) {
         toast('Could not locate element in current.svg');
@@ -883,82 +1087,64 @@ function openRenameDialog(project, node) {
     .catch((err) => toast('Failed to load: ' + err.message));
 }
 
-function saveRename() {
+async function saveRename() {
   if (!renameTarget) return;
   const { project, node } = renameTarget;
   const newId = renameId.value.trim();
   const newComment = renameComment.value.trim();
 
-  fetch(`/api/projects/${encodeURIComponent(project)}/temp-current`)
-    .then((res) => res.ok ? res.text() : fetch(`/api/projects/${encodeURIComponent(project)}/current`).then((r) => r.text()))
-    .then((svgString) => {
-      const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
-      const el = findElementByDomPath(doc, node.domPath);
-      if (!el) {
-        toast('Could not locate element in current.svg');
+  try {
+    const { doc } = await getWorkingDoc(project);
+    const el = findElementByDomPath(doc, node.domPath);
+    if (!el) {
+      toast('Could not locate element in current.svg');
+      return;
+    }
+
+    // Uniqueness check on id (skip if unchanged)
+    const oldId = el.getAttribute('id');
+    if (newId && newId !== oldId) {
+      const existing = doc.getElementById(newId);
+      if (existing && existing !== el) {
+        toast(`id "${newId}" already exists in this drawing`);
         return;
       }
+    }
 
-      // Uniqueness check on id (skip if unchanged)
-      const oldId = el.getAttribute('id');
-      if (newId && newId !== oldId) {
-        const existing = doc.getElementById(newId);
-        if (existing && existing !== el) {
-          toast(`id "${newId}" already exists in this drawing`);
-          return;
-        }
-      }
+    // Apply id to the DOM element.
+    if (newId) {
+      el.setAttribute('id', newId);
+      moveIdFirst(el); // keep id first in the opening tag (canonical form)
+    } else {
+      el.removeAttribute('id');
+    }
 
-      // Apply id to the DOM element.
-      if (newId) {
-        el.setAttribute('id', newId);
-        moveIdFirst(el); // keep id first in the opening tag (canonical form)
+    // Update the comment node directly in the DOM (no string surgery on the
+    // serialized output, which is what corrupted the file before).
+    const commentNode = findPrecedingComment(doc, el);
+    if (newComment) {
+      if (commentNode) {
+        commentNode.data = ` ${newComment} `;
       } else {
-        el.removeAttribute('id');
+        // No existing comment — insert one in the canonical position: after
+        // the element's preceding indent, with a newline+indent between it
+        // and the element (matching `<!-- note -->\n  <g ...>`). Inserting
+        // directly before the element would glue the comment to it.
+        const ws = el.previousSibling;
+        const indent = (ws && ws.nodeType === Node.TEXT_NODE && ws.data.trim() === '') ? ws.data : '\n  ';
+        const comment = doc.createComment(` ${newComment} `);
+        el.parentNode.insertBefore(comment, el);
+        el.parentNode.insertBefore(doc.createTextNode(indent), el);
       }
+    } else if (commentNode) {
+      removePrecedingComment(doc, el);
+    }
 
-      // Update the comment node directly in the DOM (no string surgery on the
-      // serialized output, which is what corrupted the file before).
-      const commentNode = findPrecedingComment(doc, el);
-      if (newComment) {
-        if (commentNode) {
-          commentNode.data = ` ${newComment} `;
-        } else {
-          // No existing comment — insert one in the canonical position: after
-          // the element's preceding indent, with a newline+indent between it
-          // and the element (matching `<!-- note -->\n  <g ...>`). Inserting
-          // directly before the element would glue the comment to it.
-          const ws = el.previousSibling;
-          const indent = (ws && ws.nodeType === Node.TEXT_NODE && ws.data.trim() === '') ? ws.data : '\n  ';
-          const comment = doc.createComment(` ${newComment} `);
-          el.parentNode.insertBefore(comment, el);
-          el.parentNode.insertBefore(doc.createTextNode(indent), el);
-        }
-      } else if (commentNode) {
-        // Remove the comment and the whitespace that followed it (the
-        // newline+indent between the comment and the element), so the element
-        // keeps its own indent and no blank line is left behind.
-        const next = commentNode.nextSibling;
-        if (next && next.nodeType === Node.TEXT_NODE && next.data.trim() === '') {
-          commentNode.parentNode.removeChild(next);
-        }
-        commentNode.parentNode.removeChild(commentNode);
-      }
-
-      const out = new XMLSerializer().serializeToString(doc);
-
-      return api(`/api/projects/${encodeURIComponent(project)}/temp-current`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'image/svg+xml' },
-        body: out
-      });
-    })
-    .then(() => {
-      toast('Saved to working copy — push to apply to current.svg');
-      renameDlg.close();
-      loadData().catch(() => {});
-    })
-    .catch((err) => toast('Save failed: ' + err.message));
+    await saveWorkingDoc(project, doc);
+    renameDlg.close();
+  } catch (err) {
+    toast('Save failed: ' + err.message);
+  }
 }
 
 $('renameDlgSave').addEventListener('click', saveRename);
@@ -967,6 +1153,195 @@ renameDlg.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') saveRename();
   if (e.key === 'Escape') renameDlg.close();
 });
+
+/* ---------- delete nodes ---------- */
+
+function countDescendants(node) {
+  let n = 0;
+  for (const c of node.children) n += 1 + countDescendants(c);
+  return n;
+}
+
+async function deleteNode(project, node) {
+  const kids = countDescendants(node);
+  const msg = kids
+    ? `Delete <${node.type}> "${node.label}" and its ${kids} child element${kids === 1 ? '' : 's'}?`
+    : `Delete <${node.type}> "${node.label}"?`;
+  if (!confirm(msg)) return;
+  try {
+    const { doc } = await getWorkingDoc(project);
+    const el = findElementByDomPath(doc, node.domPath);
+    if (!el) {
+      toast('Could not locate element in current.svg');
+      return;
+    }
+    // Clear selection if it was on the deleted node.
+    if (state.selected && state.selected.project === project &&
+        state.selected.domPath && JSON.stringify(state.selected.domPath) === JSON.stringify(node.domPath)) {
+      state.selected = null;
+      clearSelectionHighlight();
+    }
+    removePrecedingComment(doc, el);
+    el.parentNode.removeChild(el);
+    await saveWorkingDoc(project, doc);
+  } catch (err) {
+    toast('Delete failed: ' + err.message);
+  }
+}
+
+/* ---------- create groups ---------- */
+
+const createGroupDlg = $('createGroupDlg'), createGroupId = $('createGroupId'),
+      createGroupComment = $('createGroupComment'), createGroupDlgHint = $('createGroupDlgHint');
+let createGroupTarget = null; // {project, parentPath}
+
+function openCreateGroupDialog(project, parentPath) {
+  createGroupTarget = { project, parentPath };
+  createGroupId.value = '';
+  createGroupComment.value = '';
+  createGroupDlgHint.textContent = parentPath.length
+    ? `New <g> inside the selected group in project "${project}"`
+    : `New top-level <g> in project "${project}"`;
+  createGroupDlg.showModal();
+  createGroupId.focus();
+}
+
+async function saveCreateGroup() {
+  if (!createGroupTarget) return;
+  const { project, parentPath } = createGroupTarget;
+  const newId = createGroupId.value.trim();
+  const newComment = createGroupComment.value.trim();
+  try {
+    const { doc } = await getWorkingDoc(project);
+    const parent = parentPath.length ? findElementByDomPath(doc, parentPath) : doc.documentElement;
+    if (!parent) {
+      toast('Could not locate target group in current.svg');
+      return;
+    }
+    if (newId && doc.getElementById(newId)) {
+      toast(`id "${newId}" already exists in this drawing`);
+      return;
+    }
+    const g = doc.createElementNS(SVG_NS, 'g');
+    if (newId) g.setAttribute('id', newId);
+    appendChildWithComment(doc, parent, g, newComment || null);
+    await saveWorkingDoc(project, doc);
+    createGroupDlg.close();
+  } catch (err) {
+    toast('Create failed: ' + err.message);
+  }
+}
+
+$('createGroupDlgSave').addEventListener('click', saveCreateGroup);
+$('createGroupDlgCancel').addEventListener('click', () => createGroupDlg.close());
+createGroupDlg.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveCreateGroup();
+  if (e.key === 'Escape') createGroupDlg.close();
+});
+
+/* ---------- drag-and-drop reordering & nesting ---------- */
+
+let dragState = null; // {project, domPath}
+
+// True if `ancestorPath` is a strict ancestor of `descendantPath` (i.e. the
+// element at ancestorPath contains the element at descendantPath).
+function isAncestorOf(ancestorPath, descendantPath) {
+  if (ancestorPath.length >= descendantPath.length) return false;
+  return ancestorPath.every((v, i) => v === descendantPath[i]);
+}
+
+function clearDropIndicators() {
+  tree.querySelectorAll('.drop-before, .drop-after, .drop-inside').forEach((r) => r.classList.remove('drop-before', 'drop-after', 'drop-inside'));
+}
+
+function makeRowDraggable(row, project, node) {
+  const handle = row.querySelector('.drag-handle');
+  if (!handle) return;
+  handle.setAttribute('draggable', 'true');
+  handle.addEventListener('dragstart', (e) => {
+    dragState = { project, domPath: node.domPath };
+    e.dataTransfer.setData('text/plain', JSON.stringify(dragState));
+    e.dataTransfer.effectAllowed = 'move';
+    row.classList.add('dragging');
+  });
+  handle.addEventListener('dragend', () => {
+    dragState = null;
+    clearDropIndicators();
+    row.classList.remove('dragging');
+  });
+}
+
+// Compute the drop zone for a pointer position on a row: 'before', 'after',
+// or 'inside' (nest into a group's middle band).
+function dropZone(row, node, clientY) {
+  const rect = row.getBoundingClientRect();
+  const y = clientY - rect.top;
+  const h = rect.height;
+  const isGroup = node.isGroup || node.children.length > 0;
+  if (isGroup && y > h * 0.25 && y < h * 0.75) return 'inside';
+  return y < h / 2 ? 'before' : 'after';
+}
+
+function makeRowDropTarget(row, project, node) {
+  row.addEventListener('dragover', (e) => {
+    if (!dragState || dragState.project !== project) return;
+    if (JSON.stringify(dragState.domPath) === JSON.stringify(node.domPath)) return;
+    if (isAncestorOf(dragState.domPath, node.domPath)) return; // can't drop into own child
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const zone = dropZone(row, node, e.clientY);
+    row.classList.toggle('drop-before', zone === 'before');
+    row.classList.toggle('drop-after', zone === 'after');
+    row.classList.toggle('drop-inside', zone === 'inside');
+  });
+  row.addEventListener('dragleave', (e) => {
+    if (row.contains(e.relatedTarget)) return;
+    row.classList.remove('drop-before', 'drop-after', 'drop-inside');
+  });
+  row.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    row.classList.remove('drop-before', 'drop-after', 'drop-inside');
+    if (!dragState || dragState.project !== project) return;
+    const srcPath = dragState.domPath;
+    const tgtPath = node.domPath;
+    if (JSON.stringify(srcPath) === JSON.stringify(tgtPath)) return;
+    if (isAncestorOf(srcPath, tgtPath)) {
+      toast('Cannot move a group into its own child');
+      return;
+    }
+    const zone = dropZone(row, node, e.clientY);
+    try {
+      const { doc } = await getWorkingDoc(project);
+      const src = findElementByDomPath(doc, srcPath);
+      const tgt = findElementByDomPath(doc, tgtPath);
+      if (!src || !tgt) {
+        toast('Could not move element');
+        return;
+      }
+      // Clear selection if it was on the dragged node (its domPath is stale now).
+      if (state.selected && state.selected.project === project &&
+          state.selected.domPath && JSON.stringify(state.selected.domPath) === JSON.stringify(srcPath)) {
+        state.selected = null;
+        clearSelectionHighlight();
+      }
+      if (zone === 'inside') {
+        tgt.appendChild(src);
+        // Auto-expand the target group so the moved element is visible.
+        if (tgtPath.length) {
+          state.expandedNodes[nodeKey(project, 'current/' + tgtPath.join('/'))] = true;
+        }
+      } else if (zone === 'before') {
+        tgt.parentNode.insertBefore(src, tgt);
+      } else {
+        tgt.parentNode.insertBefore(src, tgt.nextSibling);
+      }
+      dragState = null;
+      await saveWorkingDoc(project, doc);
+    } catch (err) {
+      toast('Move failed: ' + err.message);
+    }
+  });
+}
 
 /* ---------- push / discard staged working copy ---------- */
 
