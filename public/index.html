@@ -1276,10 +1276,14 @@ function connect() {
     }
   };
   const on = (ev, fn) => evtSource.addEventListener(ev, (e) => fn(JSON.parse(e.data || '{}')));
-  on('current-changed', (d) => {
+  on('current-changed', async (d) => {
     if (d.project !== state.project) return;
     // Refresh hasOldCurrent so the Undo button's enabled state stays honest.
-    loadProjects();
+    // Await loadProjects before loadCurrent: loadCurrent re-renders the pill
+    // (setNameArea) from state.hasOldCurrent, which loadProjects is what
+    // updates — running them concurrently could leave the Undo button stale
+    // (e.g. right after a file-tree push captures old-current.svg).
+    await loadProjects();
     if (!state.viewingVersion && !state.codeMode) loadCurrent();
   });
   on('versions-changed', (d) => { if (d.project === state.project) loadVersions(); });

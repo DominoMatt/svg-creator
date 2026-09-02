@@ -48,13 +48,46 @@
   .node-row.version-row, .node-row.option-row { color: #777; font-size: .76rem; }
   .node-row.version-row .node-label, .node-row.option-row .node-label { font-weight: 400; }
 
-  .twisty { width: 1rem; height: 1rem; display: inline-flex; align-items: center; justify-content: center; color: #999; font-size: .7rem; flex-shrink: 0; }
-  .twisty.leaf { visibility: hidden; }
+  .twisty { width: .6rem; height: 1rem; display: inline-flex; align-items: center; justify-content: center; color: #999; font-size: .7rem; flex-shrink: 0; }
+  .twisty.leaf { display: none; }
   .node-icon { flex-shrink: 0; font-size: .82rem; width: 1.1rem; text-align: center; }
+  .node-icon.leaf { display: none; }
   .node-label { overflow: hidden; text-overflow: ellipsis; }
   .node-meta { margin-left: auto; font-size: .68rem; color: #bbb; flex-shrink: 0; }
   .node-children { list-style: none; padding-left: 1.15rem; }
   .node-children.collapsed { display: none; }
+
+  /* Tree guide lines: light gray connectors that make nesting pop visually.
+     Each child of a node-children list draws a vertical line down its left
+     edge (stopping at the last child's row) plus a horizontal connector to
+     its own row. */
+  .node-children > .node { position: relative; }
+  .node-children > .node::before,
+  .node-children > .node::after {
+    content: '';
+    position: absolute;
+    background: #e3e3e3;
+    pointer-events: none;
+  }
+  /* vertical line down the left edge of the children list */
+  .node-children > .node::before {
+    left: -0.3rem;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+  }
+  /* last child: vertical line stops at its row */
+  .node-children > .node:last-child::before {
+    height: 0.68rem;
+    bottom: auto;
+  }
+  /* horizontal connector from the vertical line to the row */
+  .node-children > .node::after {
+    left: -0.3rem;
+    top: 0.68rem;
+    width: 0.3rem;
+    height: 1px;
+  }
 
   /* Status dot: red = no id/comment (type fallback), yellow = comment-driven */
   .dot-wrap { display: inline-flex; align-items: center; gap: .15rem; margin-left: .35rem; }
@@ -102,7 +135,7 @@
   <div class="header-right">
     <button id="pushBtn" class="small" style="display:none" title="Push the staged working copy into current.svg">Push to current</button>
     <button id="discardBtn" class="small secondary" style="display:none" title="Discard staged changes">Discard</button>
-    <button id="backBtn" class="secondary" title="Back to SVG Studio">← Studio</button>
+    <button id="backBtn" class="secondary" title="Close this tab and return to SVG Studio">← Studio</button>
     <span id="statusPill" class="status-pill down" title="Connection to the server">Connecting…</span>
   </div>
 </header>
@@ -323,6 +356,9 @@ function renderTree() {
       curRow.dataset.file = 'current';
       const curTwisty = document.createElement('span');
       curTwisty.className = 'twisty';
+      // //current is always expanded (not collapsible), so there's no arrow —
+      // fill the void with a small bullet so the row doesn't look empty.
+      curTwisty.textContent = '•';
       const curIcon = document.createElement('span');
       curIcon.className = 'node-icon';
       curIcon.textContent = '🖼';
@@ -461,8 +497,11 @@ function renderSvgNode(project, file, node, path) {
     twisty.textContent = isExpanded(project, path) ? '▾' : '▸';
   }
   const icon = document.createElement('span');
-  icon.className = 'node-icon';
-  icon.textContent = node.children.length ? '📁' : '▸';
+  // Groups get a folder; leaves get nothing (and take no space) so their
+  // labels sit flush left, aligned with the folders' twisty rather than
+  // pushed right by an empty icon slot.
+  icon.className = 'node-icon' + (node.children.length ? '' : ' leaf');
+  icon.textContent = node.children.length ? '📁' : '';
   // Status dot: red = no id & no comment (falls back to type), yellow =
   // comment-driven label, green = has a proper id. Clicking the dot opens the
   // rename dialog. A trailing ! shows if the element has a comment.
@@ -885,9 +924,24 @@ function saveRename() {
         if (commentNode) {
           commentNode.data = ` ${newComment} `;
         } else {
-          el.parentNode.insertBefore(doc.createComment(` ${newComment} `), el);
+          // No existing comment — insert one in the canonical position: after
+          // the element's preceding indent, with a newline+indent between it
+          // and the element (matching `<!-- note -->\n  <g ...>`). Inserting
+          // directly before the element would glue the comment to it.
+          const ws = el.previousSibling;
+          const indent = (ws && ws.nodeType === Node.TEXT_NODE && ws.data.trim() === '') ? ws.data : '\n  ';
+          const comment = doc.createComment(` ${newComment} `);
+          el.parentNode.insertBefore(comment, el);
+          el.parentNode.insertBefore(doc.createTextNode(indent), el);
         }
       } else if (commentNode) {
+        // Remove the comment and the whitespace that followed it (the
+        // newline+indent between the comment and the element), so the element
+        // keeps its own indent and no blank line is left behind.
+        const next = commentNode.nextSibling;
+        if (next && next.nodeType === Node.TEXT_NODE && next.data.trim() === '') {
+          commentNode.parentNode.removeChild(next);
+        }
         commentNode.parentNode.removeChild(commentNode);
       }
 
@@ -954,7 +1008,15 @@ $('discardBtn').addEventListener('click', async () => {
 /* ---------- init ---------- */
 
 $('backBtn').addEventListener('click', () => {
-  window.location.href = '/';
+  // This view is normally opened from index.html via window.open, so the
+  // studio is already open in another tab — close this one instead of
+  // navigating it to '/'. If it was opened directly (no opener), fall back
+  // to navigating so the button always does something useful.
+  if (window.opener) {
+    window.close();
+  } else {
+    window.location.href = '/';
+  }
 });
 
 loadData().catch((err) => {

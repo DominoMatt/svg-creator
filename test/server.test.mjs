@@ -137,6 +137,10 @@ test('push moves temp-current into current and clears it', async () => {
   assert.ok(cur.includes('seagreen'), 'current.svg should now hold the pushed content');
   const temp = await req('GET', `/api/projects/${NAME}/temp-current`);
   assert.equal(temp.status, 404, 'temp-current should be removed after push');
+  // Push goes through writeCurrent, so it must capture the pre-push current
+  // (svg2/tomato) into old-current.svg — the undo slot the studio relies on.
+  const old = await fsp.readFile(path.join(ROOT, 'public', 'svgs', NAME, 'old-current.svg'), 'utf8');
+  assert.ok(old.includes('tomato'), 'old-current should hold the pre-push content after a push');
 });
 
 test('push with no temp-current reports 404', async () => {
